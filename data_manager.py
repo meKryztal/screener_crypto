@@ -59,7 +59,7 @@ def _cache_path(symbol: str, tf: str) -> str:
 
 def cache_save(symbol: str, tf: str, df: pd.DataFrame):
     try:
-        df.to_parquet(_cache_path(symbol, tf))
+        df.to_parquet(_cache_path(symbol, tf), compression="snappy")
     except Exception as e:
         logger.warning(f"cache_save {symbol} {tf}: {e}")
 
@@ -199,6 +199,23 @@ class DataStore:
                 return True
         return False
 
+    @staticmethod
+    def _upsert_bar(df: pd.DataFrame, ts, row: dict, limit: int) -> pd.DataFrame:
+        """
+        Вставляет или обновляет бар в DataFrame.
+        Оптимизация: сравниваем только с последним индексом (O(1))
+        вместо `ts in df.index` (O(n) линейный поиск).
+        """
+        if len(df) > 0 and df.index[-1] == ts:
+            # Обновляем последний бар (самый частый случай при live-данных)
+            for k, v in row.items():
+                df.iat[-1, df.columns.get_loc(k)] = v
+        else:
+            df.loc[ts] = row
+            if len(df) > limit + 200:
+                return df.iloc[-limit:]
+        return df
+
     async def update_bar(self, symbol: str, tf: str, bar: dict, closed: bool):
         async with self._locks[symbol]:
             ts  = bar["ts"]
@@ -207,24 +224,12 @@ class DataStore:
             # Update mini store
             mini = self._mini.get(symbol)
             if mini is not None:
-                if ts in mini.index:
-                    for k, v in row.items():
-                        mini.at[ts, k] = v
-                else:
-                    mini.loc[ts] = row
-                    if len(mini) > MINI_BARS + 50:
-                        self._mini[symbol] = mini.iloc[-MINI_BARS:]
+                self._mini[symbol] = self._upsert_bar(mini, ts, row, MINI_BARS)
 
             # Update chart store if loaded
             chart = self._chart.get(symbol)
             if chart is not None:
-                if ts in chart.index:
-                    for k, v in row.items():
-                        chart.at[ts, k] = v
-                else:
-                    chart.loc[ts] = row
-                    if len(chart) > CHART_LIMIT + 200:
-                        self._chart[symbol] = chart.iloc[-CHART_LIMIT:]
+                self._chart[symbol] = self._upsert_bar(chart, ts, row, CHART_LIMIT)
 
         price = bar.get("close")
         if price:
@@ -513,45 +518,6 @@ class DataManager:
                     await asyncio.sleep(0.2)
 
                 await asyncio.sleep(10)  # check every 10s if any key needs update
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.warning(f"oi_poll: {e}")
-                await asyncio.sleep(10)
-
-    async def ensure_oi(self, symbol: str, tf: str = "5m"):
-        if self.store.get_oi(symbol, tf) is not None:
-            return
-        loop = asyncio.get_event_loop()
-        df   = await loop.run_in_executor(None, self._fetch_oi_history, symbol, tf)
-        if df is not None:
-            self.store.set_oi(symbol, tf, df)
-
-    async def _oi_poll_loop(self, symbols: List[str]):
-        await asyncio.sleep(30)
-        while self._running:
-            try:
-                loop        = asyncio.get_event_loop()
-                cached_keys = list(self.store._oi.keys())
-                for key in cached_keys:
-                    if not self._running:
-                        break
-                    sym, tf = key.rsplit(":", 1)
-                    period  = self._OI_TF_MAP.get(tf, "1h")
-                    floor   = {
-                        "5m": "5min", "15m": "15min",
-                        "1h": "1h",   "4h":  "4h",   "1d": "1D",
-                    }.get(period, "1h")
-                    val = await loop.run_in_executor(None, self._fetch_oi_snapshot, sym)
-                    if val is not None:
-                        df = self.store.get_oi(sym, tf)
-                        if df is not None:
-                            ts = pd.Timestamp.now(tz="UTC").floor(floor)
-                            df.loc[ts] = val
-                            if len(df) > OI_HIST_LIMIT + 100:
-                                self.store.set_oi(sym, tf, df.iloc[-OI_HIST_LIMIT:])
-                    await asyncio.sleep(0.2)
-                await asyncio.sleep(OI_INTERVAL)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
