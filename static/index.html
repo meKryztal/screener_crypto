@@ -86,8 +86,7 @@ body{height:100%;height:100dvh;overflow:hidden;background:var(--bg0);color:var(-
   cursor:pointer;text-align:center;text-transform:uppercase;letter-spacing:.3px;transition:all .15s}
 .sort-tab:hover{color:var(--t1);border-color:var(--t2)}
 .sort-tab.active{background:color-mix(in srgb,var(--blue) 12%,transparent);border-color:var(--blue);color:var(--blue)}
-.sort-tab.pump{border-color:color-mix(in srgb,var(--green) 40%,var(--border))}
-.sort-tab.pump.active{background:color-mix(in srgb,var(--green) 12%,transparent);border-color:var(--green);color:var(--green)}
+.sort-tab.pump:not(.active){border-color:var(--border)}
 .pump-val{color:var(--green);font-weight:700;text-align:right;white-space:nowrap}
 .pump-val.neg{color:var(--red)}
 .anom-bid{color:var(--green);font-weight:700;text-align:right;white-space:nowrap}
@@ -124,6 +123,7 @@ body{height:100%;height:100dvh;overflow:hidden;background:var(--bg0);color:var(-
   display:flex;align-items:center;padding:0 10px;flex-shrink:0;gap:0;overflow-x:auto;overflow-y:hidden;
   margin-left:var(--side);transition:margin-left .25s ease;}
 .screener-hidden .toolbar{margin-left:0;}
+.screener-hidden .ind-panel{left:0;}
 .toolbar::-webkit-scrollbar{height:0}
 .tb-grp{display:flex;align-items:center;gap:2px;padding:0 8px;border-right:1px solid var(--border);flex-shrink:0}
 .tb-grp:last-child{border-right:none;margin-left:auto}
@@ -148,6 +148,13 @@ body{height:100%;height:100dvh;overflow:hidden;background:var(--bg0);color:var(-
   font-family:inherit;font-size:11px;font-weight:600;padding:4px 10px;cursor:pointer;
   transition:opacity .15s;white-space:nowrap}
 .apply-btn:hover{opacity:.82}
+.reload-btn{background:transparent;border:1px solid var(--border);border-radius:4px;
+  color:var(--t2);font-family:inherit;font-size:11px;padding:3px 8px;cursor:pointer;
+  transition:all .15s;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.reload-btn:hover{background:color-mix(in srgb,var(--yellow) 12%,transparent);color:var(--yellow);border-color:var(--yellow)}
+.reload-btn.loading{opacity:.55;pointer-events:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.reload-btn.loading .reload-ico{animation:spin .7s linear infinite}
 .step-btns{display:flex;flex-direction:column;gap:1px}
 .step-btn{background:var(--bg2);border:1px solid var(--border);border-radius:3px;
   color:var(--t1);font-size:9px;line-height:1;padding:0;cursor:pointer;
@@ -218,13 +225,14 @@ canvas#previewCanvas{position:absolute;pointer-events:none;z-index:101;top:0;lef
 .screener-toggle:hover{background:var(--bg3);color:var(--t0);border-color:var(--t2)}
 
 /* Indicators accordion */
-.ind-panel{position:absolute;top:var(--bar);left:var(--side);right:0;z-index:200;
-  background:var(--bg1);border-bottom:1px solid var(--border);
+.ind-panel{position:absolute;top:0;left:var(--side);right:0;z-index:200;
+  background:var(--bg1);
   box-shadow:0 6px 20px rgba(0,0,0,.35);
-  overflow:hidden;transition:max-height .22s ease,opacity .18s ease,left .25s ease;
-  max-height:0;opacity:0;pointer-events:none;padding:0 12px}
-.screener-hidden .ind-panel{left:0;}
-.ind-panel.open{max-height:60px;opacity:1;pointer-events:auto;padding:8px 12px}
+  overflow:hidden;
+  transition:max-height .22s ease,opacity .18s ease,left .25s ease;
+  max-height:0;opacity:0;pointer-events:none;padding:0 12px;}
+.ind-panel.open{max-height:80px;opacity:1;pointer-events:auto;padding:8px 12px;
+  border-bottom:1px solid var(--border);}
 .ind-toggle-btn{background:transparent;border:1px solid var(--border);border-radius:4px;
   color:var(--t2);font-family:inherit;font-size:11px;font-weight:500;
   padding:4px 10px;cursor:pointer;transition:all .15s;white-space:nowrap;
@@ -301,9 +309,9 @@ canvas#domCanvas{position:absolute;pointer-events:none;z-index:99;top:0;left:0}
       </div>
       <div class="tb-grp">
         <span class="tb-lbl">POC</span>
-        <button class="poc-btn on" data-poc="4H" style="color:#1f77b4;border-color:#1f77b4" onclick="togglePOC('4H')">4H</button>
-        <button class="poc-btn on" data-poc="1D" style="color:#fc7601;border-color:#fc7601" onclick="togglePOC('1D')">1D</button>
-        <button class="poc-btn on" data-poc="1W" style="color:#298b29;border-color:#298b29" onclick="togglePOC('1W')">1W</button>
+        <button class="poc-btn" data-poc="4H" style="color:#1f77b4;border-color:#1f77b4" onclick="togglePOC('4H')">4H</button>
+        <button class="poc-btn" data-poc="1D" style="color:#fc7601;border-color:#fc7601" onclick="togglePOC('1D')">1D</button>
+        <button class="poc-btn" data-poc="1W" style="color:#298b29;border-color:#298b29" onclick="togglePOC('1W')">1W</button>
         <button class="poc-btn" data-poc="1M" style="color:#9467bd;border-color:#9467bd" onclick="togglePOC('1M')">1M</button>
       </div>
       <div class="tb-grp">
@@ -322,27 +330,39 @@ canvas#domCanvas{position:absolute;pointer-events:none;z-index:99;top:0;left:0}
       </div>
       <div class="tb-grp">
         <span class="thresh-info" id="threshInfo">—</span>
+        <button class="reload-btn" id="reloadBtn" onclick="reloadCurrentSymbol()" title="Перезагрузить данные монеты (очистить кэш)">
+          <svg class="reload-ico" width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M10.5 6A4.5 4.5 0 1 1 8.25 2.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            <path d="M8 1L8.5 3.5L6 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Reload
+        </button>
       </div>
     </div>
-    <!-- Indicators accordion -->
-    <div class="ind-panel" id="indPanel">
-      <div class="ind-row">
+    <div class="charts-wrap" id="chartsWrap">
+      <!-- Indicators accordion — position:absolute поверх графика -->
+      <div class="ind-panel" id="indPanel">
+        <div class="ind-row">
         <label class="ind-chk"><input type="checkbox" id="ind-volume" onchange="toggleIndicator('volume',this.checked)"><span class="chk-box"></span>Volume</label>
         <label class="ind-chk"><input type="checkbox" id="ind-delta" onchange="toggleIndicator('delta',this.checked)"><span class="chk-box"></span>Delta</label>
         <label class="ind-chk"><input type="checkbox" id="ind-oi" onchange="toggleIndicator('oi',this.checked)"><span class="chk-box"></span>OI</label>
         <label class="ind-chk"><input type="checkbox" id="ind-sma20" onchange="toggleIndicator('sma20',this.checked)"><span class="chk-box"></span>SMA 20</label>
         <label class="ind-chk"><input type="checkbox" id="ind-ema200" onchange="toggleIndicator('ema200',this.checked)"><span class="chk-box"></span>EMA 200</label>
         <span style="width:1px;background:var(--border);margin:0 4px;align-self:stretch"></span>
-        <label class="ind-chk"><input type="checkbox" id="ind-cluster" checked onchange="toggleIndicator('cluster',this.checked)"><span class="chk-box"></span>Cluster</label>
-        <label class="ind-chk"><input type="checkbox" id="ind-poc-all" checked onchange="toggleAllPOC(this.checked)"><span class="chk-box"></span>POC</label>
+        <label class="ind-chk"><input type="checkbox" id="ind-cluster" onchange="toggleIndicator('cluster',this.checked)"><span class="chk-box"></span>Cluster</label>
+        <label class="ind-chk"><input type="checkbox" id="ind-poc-all" onchange="toggleAllPOC(this.checked)"><span class="chk-box"></span>POC</label>
         <span style="width:1px;background:var(--border);margin:0 4px;align-self:stretch"></span>
         <label class="ind-chk"><input type="checkbox" id="ind-dom" onchange="toggleIndicator('dom',this.checked)"><span class="chk-box"></span>DOM</label>
         <label class="ind-chk"><input type="checkbox" id="ind-limitlevels" onchange="toggleIndicator('limitlevels',this.checked)"><span class="chk-box"></span>Big Bid/Ask</label>
         <span style="color:var(--t2);font-size:10px;margin-left:4px">mult</span>
-        <input class="tb-inp" id="limitMultEl" type="number" value="8" min="2" max="50" step="1" style="width:42px" onchange="applyLimitMult()" title="Мультипликатор аномалии">
+        <input class="tb-inp" id="limitMultEl" type="number" value="8" min="2" max="50" step="1" style="width:42px" title="Мультипликатор аномалии">
+        <span style="color:var(--t2);font-size:10px;margin-left:4px">depth</span>
+        <input class="tb-inp" id="limitDepthEl" type="number" value="100" min="5" max="1000" step="5" style="width:50px" title="Глубина стакана">
+        <span style="color:var(--t2);font-size:10px;margin-left:4px">min$</span>
+        <input class="tb-inp" id="limitMinUsdEl" type="number" value="0" min="0" step="1000" style="width:60px" title="Мин. сумма лимитки в USD">
+        <button class="apply-btn" style="margin-left:4px" onclick="applyLimitParams()">Apply</button>
+        </div>
       </div>
-    </div>
-    <div class="charts-wrap" id="chartsWrap">
       <div class="main-pane" id="mainPane">
         <canvas id="domCanvas"></canvas>
         <canvas id="bubbleCanvas"></canvas>
@@ -459,6 +479,9 @@ function saveSettings(){
         indPanelOpen: document.getElementById('indPanel')?.classList.contains('open'),
         screenerVisible,
         theme: currentTheme,
+        limitMult:   parseFloat(document.getElementById('limitMultEl')?.value)   || 8,
+        limitDepth:  parseInt(document.getElementById('limitDepthEl')?.value)    || 100,
+        limitMinUsd: parseFloat(document.getElementById('limitMinUsdEl')?.value) || 0,
       }
       await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)})
     }catch(e){}
@@ -467,11 +490,11 @@ function saveSettings(){
 // _saved will be populated after async server fetch — defaults used until then
 let activeTF=_saved.tf||'5m'
 if(_saved.sortField){sortField=_saved.sortField;sortAsc=!!_saved.sortAsc}
-const pocState={"4H":true,"1D":true,"1W":true,"1M":false}
+const pocState={"4H":false,"1D":false,"1W":false,"1M":false}
 if(_saved.pocState)Object.assign(pocState,_saved.pocState)
 
 // Indicator toggles state (dom:false by default)
-const indState={oi:false,volume:false,delta:false,sma20:false,ema200:false,cluster:true,dom:false,limitlevels:false}
+const indState={oi:false,volume:false,delta:false,sma20:false,ema200:false,cluster:false,dom:false,limitlevels:false}
 if(_saved.indState)Object.assign(indState,_saved.indState)
 let indPanelOpen=_saved.indPanelOpen||false
 const POC_COLORS={"4H":"#1f77b4","1D":"#fc7601","1W":"#298b29","1M":"#9467bd"}
@@ -1847,13 +1870,17 @@ async function _fetchLimitLevels(symbol){
   }catch(e){}
 }
 
-async function applyLimitMult(){
-  const v = parseFloat(document.getElementById('limitMultEl')?.value) || 8
+async function applyLimitParams(){
+  const mult   = parseFloat(document.getElementById('limitMultEl')?.value)   || 8
+  const depth  = parseInt(document.getElementById('limitDepthEl')?.value)    || 100
+  const minUsd = parseFloat(document.getElementById('limitMinUsdEl')?.value) || 0
   try{
-    await fetch(`/api/set_limit_mult?mult=${v}`, {method:'POST'})
+    await fetch(`/api/set_limit_params?mult=${mult}&depth=${depth}&min_usd=${minUsd}`, {method:'POST'})
     if(activeSymbol && indState.limitlevels) _fetchLimitLevels(activeSymbol)
+    saveSettings()
   }catch(e){}
 }
+async function applyLimitMult(){ await applyLimitParams() }
 
 function _startLimitLevels(symbol){
   _stopLimitLevels()
@@ -1878,9 +1905,20 @@ function _drawLimitLevels(ctx, cw, ch){
     const isBid = lv.side === 'bid'
     const col = isBid ? 'rgba(14,203,129,' : 'rgba(246,70,93,'
 
-    // first_seen is unix seconds — use timeToX which extrapolates beyond chart data
-    // (handles case where first_seen is in the "empty right zone" after last bar)
-    const x0 = lv.first_seen ? timeToX(lv.first_seen) : null
+    // first_seen is unix seconds — snap to the bar that was open at that moment.
+    // timeToX only works on exact bar timestamps; real-time first_seen falls between
+    // bars and the extrapolation loses sub-bar precision (two levels 13m apart on a
+    // 5m chart would both map to the same candle). Instead we binary-search currentBars
+    // for the last bar whose open time <= first_seen so each level starts at the exact
+    // candle it appeared in.
+    let x0 = null
+    if(lv.first_seen && currentBars.length){
+      let snapTime = null
+      for(let i = currentBars.length - 1; i >= 0; i--){
+        if(currentBars[i].time <= lv.first_seen){ snapTime = currentBars[i].time; break }
+      }
+      if(snapTime !== null) x0 = timeToX(snapTime)
+    }
     const x1 = drawW
 
     // Skip if start point is to the right of chart area (shouldn't happen)
@@ -2073,6 +2111,21 @@ function copySymbol(){
 function updateOHLC(b){}
 
 // ─── Chart loading ───
+async function reloadCurrentSymbol(){
+  if(!activeSymbol) return
+  const btn = document.getElementById('reloadBtn')
+  if(btn) btn.classList.add('loading')
+  try{
+    const res = await fetch(`/api/reload/${encodeURIComponent(activeSymbol)}`, {method:'POST'})
+    if(res.ok){
+      await loadChart(activeSymbol, activeTF)
+    }
+  }catch(e){ console.error('reload:', e) }
+  finally{
+    if(btn) btn.classList.remove('loading')
+  }
+}
+
 async function loadChart(symbol,tf){
   tf=tf||activeTF; activeSymbol=symbol; activeTF=tf
   document.querySelectorAll('.sym-row').forEach(r=>r.classList.toggle('active',r.dataset.sym===symbol))
@@ -2087,8 +2140,13 @@ async function loadChart(symbol,tf){
   const pocP = new URLSearchParams({tf,poc4h:pocState['4H'],poc1d:pocState['1D'],poc1w:pocState['1W'],poc1m:pocState['1M']})
 
   const barsPromise       = fetch(`/api/bars/${enc}?tf=${tf}`).then(r=>r.json())
-  const absorptionPromise = fetch(`/api/absorption/${enc}?tf=${tf}&mode=${mode}&percentile=${pct}&manual_vol=${vol}`).then(r=>r.json()).catch(()=>null)
-  const pocPromise        = fetch(`/api/poc/${enc}?${pocP}`).then(r=>r.json()).catch(()=>null)
+  const absorptionPromise = indState.cluster
+    ? fetch(`/api/absorption/${enc}?tf=${tf}&mode=${mode}&percentile=${pct}&manual_vol=${vol}`).then(r=>r.json()).catch(()=>null)
+    : Promise.resolve(null)
+  const pocEnabled = ['4H','1D','1W','1M'].some(l=>pocState[l])
+  const pocPromise = pocEnabled
+    ? fetch(`/api/poc/${enc}?${pocP}`).then(r=>r.json()).catch(()=>null)
+    : Promise.resolve(null)
   const oiPromise         = indState.oi
     ? fetch(`/api/oi/${enc}?tf=${tf}`).then(r=>r.ok?r.json():null).catch(()=>null)
     : Promise.resolve(null)
@@ -2138,6 +2196,7 @@ async function loadChart(symbol,tf){
 }
 
 async function loadAbsorption(symbol,tf){
+  if(!indState.cluster) return
   tf=tf||activeTF
   const mode=document.getElementById('modeEl').value
   const pct=document.getElementById('pctEl').value
@@ -2152,6 +2211,7 @@ async function loadAbsorption(symbol,tf){
 }
 
 async function loadPOC(symbol,tf){
+  if(!['4H','1D','1W','1M'].some(l=>pocState[l])) return
   tf=tf||activeTF
   const p=new URLSearchParams({tf,poc4h:pocState['4H'],poc1d:pocState['1D'],poc1w:pocState['1W'],poc1m:pocState['1M']})
   try{
@@ -2202,6 +2262,7 @@ function toggleIndPanel(){
   btn.classList.toggle('open',open)
   arrow.textContent=open?'▴':'▾'
   indPanelOpen=open
+  setTimeout(resize, 250)
   saveSettings()
 }
 
@@ -2637,7 +2698,12 @@ document.getElementById('modeEl').addEventListener('change',function(){
   document.getElementById('volEl').style.display=auto?'none':''
 })
 
-function applySettings(){if(activeSymbol){loadAbsorption(activeSymbol);loadPOC(activeSymbol);saveSettings()}}
+function applySettings(){
+  if(!activeSymbol) return
+  if(indState.cluster) loadAbsorption(activeSymbol)
+  if(['4H','1D','1W','1M'].some(l=>pocState[l])) loadPOC(activeSymbol)
+  saveSettings()
+}
 
 function stepInput(dir){
   const mode = document.getElementById('modeEl').value
@@ -2743,7 +2809,10 @@ async function pollSymbols(){
 
 function startAutoRefresh(){
   setInterval(()=>{
-    if(activeSymbol){loadAbsorption(activeSymbol,activeTF);loadPOC(activeSymbol,activeTF)}
+    if(activeSymbol){
+      if(indState.cluster) loadAbsorption(activeSymbol,activeTF)
+      if(['4H','1D','1W','1M'].some(l=>pocState[l])) loadPOC(activeSymbol,activeTF)
+    }
   },15000)
   setInterval(()=>{
     if(sortField==='anomaly') loadAnomalies()
@@ -2815,7 +2884,7 @@ async function _bootstrap(){
     const panel=document.getElementById('indPanel')
     const btn=document.getElementById('indToggleBtn')
     const arrow=document.getElementById('indToggleArrow')
-    if(panel){panel.classList.add('open');btn&&btn.classList.add('open');if(arrow)arrow.textContent='▴'}
+    if(panel){panel.classList.add('open');btn&&btn.classList.add('open');if(arrow)arrow.textContent='▴';setTimeout(resize,100)}
   }
   // Restore screener visibility
   if(_saved.screenerVisible===false){
@@ -2824,6 +2893,13 @@ async function _bootstrap(){
   // Restore DOM depth select value
   const _domSel=document.getElementById('domDepthSel')
   if(_domSel) _domSel.value=String(domDepth)
+  // Restore Big Bid/Ask params and sync to backend
+  if(s.limitMult!=null){const el=document.getElementById('limitMultEl');if(el)el.value=s.limitMult}
+  if(s.limitDepth!=null){const el=document.getElementById('limitDepthEl');if(el)el.value=s.limitDepth}
+  if(s.limitMinUsd!=null){const el=document.getElementById('limitMinUsdEl');if(el)el.value=s.limitMinUsd}
+  if(s.limitMult!=null||s.limitDepth!=null||s.limitMinUsd!=null){
+    applyLimitParams().catch(()=>{})
+  }
 })()
 
 const waitFirst=setInterval(async()=>{
