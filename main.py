@@ -436,21 +436,12 @@ async def api_bars(symbol: str, tf: str = "5m"):
         raise HTTPException(400, f"Неизвестный TF: {tf}")
     m = get_manager()
 
-    # Если chart_store уже загружен — отдаём полную историю сразу
-    if m.store.has_chart(symbol):
-        df_1m = m.store.get_chart(symbol)
-    else:
-        # Chart не загружен — отдаём mini мгновенно, грузим chart в фоне
-        df_1m = m.store.get_mini(symbol)
-        # Запускаем загрузку полной истории в фоне (не блокируем ответ)
-        asyncio.create_task(_ensure_chart_bg(symbol))
+    # Всегда ждём полный chart — mini только для скринера
+    await m.ensure_tf(symbol, "1m")
+    df_1m = m.store.get(symbol, "1m")
 
     if df_1m is None or df_1m.empty:
-        # Совсем нет данных — ждём
-        await m.ensure_tf(symbol, "1m")
-        df_1m = m.store.get(symbol, "1m")
-        if df_1m is None or df_1m.empty:
-            raise HTTPException(404, f"Нет данных {symbol}")
+        raise HTTPException(404, f"Нет данных {symbol}")
 
     if tf == "1m":
         df = df_1m
@@ -461,6 +452,12 @@ async def api_bars(symbol: str, tf: str = "5m"):
     limit      = MAX_DISPLAY.get(tf, MAX_DISPLAY_DEFAULT)
     display_df = df.iloc[-limit:] if len(df) > limit else df
     return ohlcv_to_json(display_df)
+
+
+@app.get("/api/chart_ready/{symbol:path}")
+async def api_chart_ready(symbol: str):
+    m = get_manager()
+    return {"ready": m.store.has_chart(symbol)}
 
 
 async def _ensure_chart_bg(symbol: str):
@@ -566,7 +563,54 @@ async def api_poc(
     return result
 
 
-@app.get("/api/oi/{symbol:path}")
+@app.post("/api/reload/{symbol:path}")
+async def api_reload(symbol: str):
+    """
+    Принудительная перезагрузка данных монеты:
+    - удаляет chart из RAM и кэш на диске
+    - заново скачивает полную историю с биржи
+    - сбрасывает result_cache для этого символа
+    """
+    import os as _os
+    m = get_manager()
+
+    # Удаляем chart из RAM
+    if symbol in m.store._chart:
+        del m.store._chart[symbol]
+    if symbol in m.store._chart_access:
+        del m.store._chart_access[symbol]
+
+    # Удаляем кэш с диска
+    from data_manager import _cache_path
+    cache_file = _cache_path(symbol, "1m")
+    if _os.path.exists(cache_file):
+        try:
+            _os.remove(cache_file)
+        except Exception as e:
+            logger.warning(f"reload: не удалось удалить кэш {symbol}: {e}")
+
+    # Чистим result_cache для этого символа
+    stale_keys = [k for k in _result_cache if len(k) > 1 and k[1] == symbol]
+    for k in stale_keys:
+        del _result_cache[k]
+
+    # Перезагружаем полную историю
+    loop = asyncio.get_event_loop()
+    try:
+        ok = await loop.run_in_executor(None, m._load_chart, symbol)
+    except Exception as e:
+        raise HTTPException(500, f"Ошибка загрузки {symbol}: {e}")
+
+    if not ok:
+        raise HTTPException(500, f"Не удалось загрузить данные для {symbol}")
+
+    df = m.store.get(symbol, "1m")
+    bars = len(df) if df is not None else 0
+    logger.info(f"reload: {symbol} перезагружен, {bars} баров")
+    return {"ok": True, "bars": bars, "symbol": symbol}
+
+
+
 async def api_oi(symbol: str, tf: str = "5m"):
     m = get_manager()
     await m.ensure_oi(symbol, tf)
@@ -628,6 +672,7 @@ _DOM_POLL_INTERVAL = 30
 _DOM_DEPTH         = 100
 _DOM_MIN_PERSIST   = 60
 _DOM_ANOMALY_MULT  = 8.0
+_DOM_MIN_USD       = 0.0
 
 
 def _fetch_dom_sync(binance_sym: str) -> dict:
@@ -682,6 +727,8 @@ def _detect_anomalies(symbol: str, current_price: float) -> list:
                 continue
             score = qty / median_qty
             if score < _DOM_ANOMALY_MULT or current_price <= 0:
+                continue
+            if _DOM_MIN_USD > 0 and qty * price < _DOM_MIN_USD:
                 continue
             key = f"{side}_{rounded}"
             seen_now.add(key)
@@ -757,6 +804,16 @@ async def api_set_limit_mult(mult: float = 8.0):
     _DOM_ANOMALY_MULT = max(2.0, min(100.0, mult))
     _DOM_ANOMALIES.clear()
     return {"mult": _DOM_ANOMALY_MULT}
+
+
+@app.post("/api/set_limit_params")
+async def api_set_limit_params(mult: float = 8.0, depth: int = 100, min_usd: float = 0.0):
+    global _DOM_ANOMALY_MULT, _DOM_DEPTH, _DOM_MIN_USD
+    _DOM_ANOMALY_MULT = max(2.0, min(100.0, mult))
+    _DOM_DEPTH        = max(5, min(1000, depth))
+    _DOM_MIN_USD      = max(0.0, min_usd)
+    _DOM_ANOMALIES.clear()
+    return {"mult": _DOM_ANOMALY_MULT, "depth": _DOM_DEPTH, "min_usd": _DOM_MIN_USD}
 
 
 @app.get("/api/limit_levels/{symbol:path}")
