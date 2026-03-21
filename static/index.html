@@ -2078,37 +2078,59 @@ async function loadChart(symbol,tf){
   document.querySelectorAll('.sym-row').forEach(r=>r.classList.toggle('active',r.dataset.sym===symbol))
   const info=symbols.find(s=>s.symbol===symbol)
   if(info)updateHeader(symbol,info.price,info.change)
+
+  // ── Запускаем все запросы параллельно ──────────────────────────────────────
+  const enc  = encodeURIComponent(symbol)
+  const mode = document.getElementById('modeEl').value
+  const pct  = document.getElementById('pctEl').value
+  const vol  = document.getElementById('volEl').value
+  const pocP = new URLSearchParams({tf,poc4h:pocState['4H'],poc1d:pocState['1D'],poc1w:pocState['1W'],poc1m:pocState['1M']})
+
+  const barsPromise       = fetch(`/api/bars/${enc}?tf=${tf}`).then(r=>r.json())
+  const absorptionPromise = fetch(`/api/absorption/${enc}?tf=${tf}&mode=${mode}&percentile=${pct}&manual_vol=${vol}`).then(r=>r.json()).catch(()=>null)
+  const pocPromise        = fetch(`/api/poc/${enc}?${pocP}`).then(r=>r.json()).catch(()=>null)
+  const oiPromise         = indState.oi
+    ? fetch(`/api/oi/${enc}?tf=${tf}`).then(r=>r.ok?r.json():null).catch(()=>null)
+    : Promise.resolve(null)
+
+  // ── Рендерим свечи как только bars готов ───────────────────────────────────
   try{
-    const bars=await fetch(`/api/bars/${encodeURIComponent(symbol)}?tf=${tf}`).then(r=>r.json())
-    // Detect price precision from data for proper scale
+    const bars = await barsPromise
     if(bars.length){
       const samplePrice=bars[bars.length-1].close
       const precision = samplePrice>=100?2:samplePrice>=10?3:samplePrice>=1?4:samplePrice>=0.1?5:samplePrice>=0.01?6:samplePrice>=0.001?7:8
       const minMove = Math.pow(10,-precision)
       candles.applyOptions({priceFormat:{type:'price',precision,minMove}})
     }
-    // Drop the last bar — it's the current unclosed candle
     const closedBars=bars.length>1?bars.slice(0,-1):bars
     candles.setData(closedBars)
     currentBars=closedBars
     if(bars.length)updateOHLC(bars[bars.length-1])
     mainChart.timeScale().scrollToRealTime()
-    // Fixed 15% empty right space — anchored to last bar, never accumulates
     try{
       const vr=mainChart.timeScale().getVisibleLogicalRange()
       if(vr){
         const span=vr.to-vr.from
         const last=bars.length-1
-        mainChart.timeScale().setVisibleLogicalRange({from:last-span*0.85, to:last+span*0.15})
+        mainChart.timeScale().setVisibleLogicalRange({from:last-span*0.85,to:last+span*0.15})
       }
     }catch(e){}
-    // Reset price scale to auto after loading new symbol
     mainChart.applyOptions({rightPriceScale:{autoScale:true,scaleMargins:{top:0.1,bottom:0.1}}})
-    // Rebuild all enabled indicators
     rebuildIndicators(bars)
   }catch(e){console.error('bars:',e)}
+
+  // ── Ждём остальные (они уже шли параллельно с bars) ────────────────────────
   clearPocSeries()
-  await Promise.all([loadAbsorption(symbol,tf),loadPOC(symbol,tf)])
+  const [absorptionResp, pocData, oiResp] = await Promise.all([absorptionPromise, pocPromise, oiPromise])
+
+  if(absorptionResp !== null){
+    const data   = Array.isArray(absorptionResp) ? absorptionResp : (absorptionResp.signals || [])
+    const thresh = Array.isArray(absorptionResp) ? null : absorptionResp.auto_thresh
+    setAbsorption(data, thresh, mode)
+  }
+  if(pocData !== null) renderPOC(pocData)
+  if(oiResp !== null && oiResp.length){ oiData=oiResp; _redrawAllOscillators() }
+
   if(indState.dom) _startDomRefresh()
   if(indState.limitlevels) _startLimitLevels(symbol)
   _startLiveBar(symbol, tf)
@@ -2576,8 +2598,7 @@ function rebuildIndicators(bars){
   deltaData = (indState.delta && bars.length) ? calcDelta(bars) : null
   // OI
   _showPane('paneOI', !!indState.oi)
-  if(indState.oi && activeSymbol) loadOI(activeSymbol, activeTF)
-  else oiData = null
+  if(!indState.oi) oiData = null
   setTimeout(()=>{ resize(); _redrawAllOscillators() }, 100)
 }
 
