@@ -668,7 +668,7 @@ async def api_dom(symbol: str, depth: int = 50):
 _DOM_SNAPSHOTS:  dict = collections.defaultdict(lambda: collections.deque(maxlen=6))
 _DOM_ANOMALIES:  dict = {}
 _DOM_FIRST_SEEN: dict = collections.defaultdict(dict)
-_DOM_POLL_INTERVAL = 30
+_DOM_POLL_INTERVAL = 60
 _DOM_DEPTH         = 100
 _DOM_MIN_PERSIST   = 60
 _DOM_ANOMALY_MULT  = 8.0
