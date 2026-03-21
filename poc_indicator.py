@@ -1,5 +1,9 @@
 """
-poc_indicator.py — расчёт POC (Point of Control) 1:1 из фапвапва.py
+poc_indicator.py — расчёт POC (Point of Control)
+ОПТИМИЗАЦИЯ:
+  - calc_poc_for_period: убран iterrows() + вложенный цикл по бинам,
+    заменён на np.add.at (векторное распределение объёма по уровням)
+  - calc_poc_series: кэширование завершённых периодов
 """
 
 import numpy as np
@@ -54,6 +58,10 @@ def round_to_level(v, step):
 
 
 def calc_poc_for_period(period_df: pd.DataFrame, step: float) -> float:
+    """
+    Оптимизировано: убран iterrows() + вложенный Python-цикл по бинам.
+    Векторное распределение объёма через np.add.at.
+    """
     if period_df.empty or step <= 0:
         return np.nan
 
@@ -66,20 +74,25 @@ def calc_poc_for_period(period_df: pd.DataFrame, step: float) -> float:
         return (lb + ub) / 2
 
     levels = np.arange(lb, ub + step, step)
-    volumes = np.zeros(len(levels))
+    n      = len(levels)
+    volumes = np.zeros(n)
 
-    for _, row in period_df.iterrows():
-        lo, hi, vol = row["low"], row["high"], row["volume"]
-        v_lo = max(0, int(np.floor((lo - lb) / step)))
-        v_hi = min(len(levels) - 1, int(np.floor((hi - lb) / step)))
-        tks = max(1, v_hi - v_lo)
-        v_per_bin = vol / tks
-        for i in range(v_lo, max(v_hi, v_lo + 1)):
-            if i < len(volumes):
-                volumes[i] += v_per_bin
+    lo  = period_df["low"].values
+    hi  = period_df["high"].values
+    vol = period_df["volume"].values
+
+    v_lo_idx = np.clip(np.floor((lo - lb) / step).astype(int), 0, n - 1)
+    v_hi_idx = np.clip(np.floor((hi - lb) / step).astype(int), 0, n - 1)
+    tks      = np.maximum(1, v_hi_idx - v_lo_idx)
+    v_per_bin = vol / tks
+
+    # Цикл по барам (не по бинам) — намного быстрее при большом числе уровней
+    for i in range(len(lo)):
+        end = max(v_hi_idx[i], v_lo_idx[i] + 1)
+        np.add.at(volumes, np.arange(v_lo_idx[i], end), v_per_bin[i])
 
     if volumes.max() == 0:
-        return levels[len(levels) // 2]
+        return float(levels[n // 2])
 
     return float(levels[int(np.argmax(volumes))])
 
@@ -87,26 +100,45 @@ def calc_poc_for_period(period_df: pd.DataFrame, step: float) -> float:
 def calc_poc_series(base_df: pd.DataFrame,
                     poc_label: str,
                     step: float,
-                    base_tf: str) -> pd.Series:
+                    base_tf: str,
+                    _cache: dict = None) -> pd.Series:
     """
     Возвращает Series с POC для каждого бара base_df.
     poc_label: "4H", "1D", "1W", "1M", "1Y"
+
+    _cache: dict {period_start → poc_value} — кэш завершённых периодов.
+            Передавайте один и тот же dict между вызовами чтобы не
+            пересчитывать POC для уже закрытых периодов.
     """
     tf_min  = POC_TF_MIN.get(poc_label, 999999)
     cur_min = TF_MINUTES.get(base_tf, 1)
 
-    # Не показываем если текущий TF >= POC TF
     if cur_min >= tf_min:
         return pd.Series(np.nan, index=base_df.index)
 
-    freq   = FREQ_MAP[poc_label]
-    result = pd.Series(np.nan, index=base_df.index)
+    if _cache is None:
+        _cache = {}
 
+    freq   = FREQ_MAP[poc_label]
+    result = pd.Series(np.nan, index=base_df.index, dtype=float)
+
+    now = base_df.index[-1] if not base_df.empty else None
     grouped = base_df.resample(freq, label="left", closed="left")
+
     for period_start, group in grouped:
         if group.empty:
             continue
-        poc_val = calc_poc_for_period(group, step)
+
+        # Период завершён если его следующая граница уже в прошлом
+        is_closed = (now is not None) and (group.index[-1] < now)
+
+        if is_closed and period_start in _cache:
+            poc_val = _cache[period_start]
+        else:
+            poc_val = calc_poc_for_period(group, step)
+            if is_closed:
+                _cache[period_start] = poc_val
+
         result.loc[group.index] = poc_val
 
     return result
@@ -114,21 +146,29 @@ def calc_poc_series(base_df: pd.DataFrame,
 
 def calc_all_pocs(base_df: pd.DataFrame,
                   base_tf: str,
-                  show: dict) -> dict:
+                  show: dict,
+                  _caches: dict = None) -> dict:
     """
     show = {"4H": True, "1D": True, "1W": True, "1M": False, "1Y": False}
     Возвращает dict label → Series
+
+    _caches: dict {label → period_cache} — передавайте между вызовами
+             для кэширования завершённых периодов.
     """
     if base_df.empty:
         return {}
 
-    step = auto_incr(base_df)
+    if _caches is None:
+        _caches = {}
+
+    step   = auto_incr(base_df)
     result = {}
 
     for label, enabled in show.items():
         if not enabled:
             continue
-        series = calc_poc_series(base_df, label, step, base_tf)
+        period_cache = _caches.setdefault(label, {})
+        series = calc_poc_series(base_df, label, step, base_tf, _cache=period_cache)
         if not series.dropna().empty:
             result[label] = series
 
@@ -145,7 +185,6 @@ def pocs_to_json(pocs: dict, max_display: int = 500) -> list:
 
     for label, series in pocs.items():
         color = POC_COLORS.get(label, "#ffffff")
-        # Берём только последние max_display баров
         s = series.iloc[-max_display:] if len(series) > max_display else series
 
         prev_val  = None
