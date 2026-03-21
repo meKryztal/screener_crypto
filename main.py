@@ -60,6 +60,31 @@ _symbols_cache:    list  = []
 _symbols_cache_ts: float = 0.0
 _SYMBOLS_TTL = 10.0
 
+# ─── Кэш результатов absorption и poc ───────────────────────────────────────
+# Ключ: (symbol, tf, mode, percentile, manual_vol, lookback) → (result, timestamp)
+# TTL 30 сек — данные меняются только при появлении новых баров
+_result_cache: dict = {}
+_RESULT_TTL = 30.0
+
+def _cache_get(key: tuple):
+    entry = _result_cache.get(key)
+    if entry is None:
+        return None
+    result, ts = entry
+    if _time.monotonic() - ts > _RESULT_TTL:
+        del _result_cache[key]
+        return None
+    return result
+
+def _cache_set(key: tuple, value):
+    _result_cache[key] = (value, _time.monotonic())
+    # Чистим старые записи если накопилось много
+    if len(_result_cache) > 500:
+        now = _time.monotonic()
+        stale = [k for k, (_, ts) in _result_cache.items() if now - ts > _RESULT_TTL]
+        for k in stale:
+            del _result_cache[k]
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AUTH
@@ -87,25 +112,36 @@ def _record_fail(ip: str):
     _failed_attempts[ip].append(_time.time())
 
 
+# Последняя активная сессия на каждый код: code → cookie_value
+# Новый вход по тому же коду инвалидирует предыдущую сессию
+_active_sessions: dict = {}
+
+
 def _make_cookie(code: str) -> str:
-    """Создаём подписанную куку: code.hmac_sig"""
-    sig = hmac.new(code.encode(), code.encode(), hashlib.sha256).hexdigest()[:16]
-    return f"{code}.{sig}"
+    """Создаём куку с nonce — каждый вход уникален."""
+    nonce = secrets.token_hex(8)
+    sig   = hmac.new(code.encode(), (code + nonce).encode(), hashlib.sha256).hexdigest()[:16]
+    value = f"{code}.{nonce}.{sig}"
+    _active_sessions[code] = value  # старая сессия этого кода слетает
+    return value
 
 
 def _verify_cookie(cookie_value: str) -> bool:
     """
     Кука валидна если:
     1. Подпись верна
-    2. Код всё ещё есть в .env (проверяется динамически — без перезапуска)
+    2. Код есть в .env
+    3. Это последняя выданная сессия для данного кода
+       (вошёл с другого устройства — старая кука слетает)
     """
     try:
-        code, sig = cookie_value.rsplit(".", 1)
-        expected  = hmac.new(code.encode(), code.encode(), hashlib.sha256).hexdigest()[:16]
-        return (
-            secrets.compare_digest(sig, expected) and
-            code in _get_codes()
-        )
+        code, nonce, sig = cookie_value.rsplit(".", 2)
+        expected = hmac.new(code.encode(), (code + nonce).encode(), hashlib.sha256).hexdigest()[:16]
+        if not secrets.compare_digest(sig, expected):
+            return False
+        if code not in _get_codes():
+            return False
+        return _active_sessions.get(code) == cookie_value
     except Exception:
         return False
 
@@ -234,7 +270,7 @@ TEST_SYMBOLS = [
 async def lifespan(app: FastAPI):
     manager = get_manager()
     symbols = await manager.fetch_all_futures_symbols()
-    # symbols = TEST_SYMBOLS
+    #symbols = TEST_SYMBOLS
     asyncio.create_task(manager.start(symbols))
     asyncio.create_task(_symbols_refresh_loop())
     asyncio.create_task(_dom_poll_loop())
@@ -399,10 +435,22 @@ async def api_bars(symbol: str, tf: str = "5m"):
     if tf not in ALL_TFS:
         raise HTTPException(400, f"Неизвестный TF: {tf}")
     m = get_manager()
-    await m.ensure_tf(symbol, "1m")
-    df_1m = m.store.get(symbol, "1m")
+
+    # Если chart_store уже загружен — отдаём полную историю сразу
+    if m.store.has_chart(symbol):
+        df_1m = m.store.get_chart(symbol)
+    else:
+        # Chart не загружен — отдаём mini мгновенно, грузим chart в фоне
+        df_1m = m.store.get_mini(symbol)
+        # Запускаем загрузку полной истории в фоне (не блокируем ответ)
+        asyncio.create_task(_ensure_chart_bg(symbol))
+
     if df_1m is None or df_1m.empty:
-        raise HTTPException(404, f"Нет данных {symbol}")
+        # Совсем нет данных — ждём
+        await m.ensure_tf(symbol, "1m")
+        df_1m = m.store.get(symbol, "1m")
+        if df_1m is None or df_1m.empty:
+            raise HTTPException(404, f"Нет данных {symbol}")
 
     if tf == "1m":
         df = df_1m
@@ -415,6 +463,16 @@ async def api_bars(symbol: str, tf: str = "5m"):
     return ohlcv_to_json(display_df)
 
 
+async def _ensure_chart_bg(symbol: str):
+    """Загружает полную историю в фоне не блокируя текущий запрос."""
+    try:
+        m    = get_manager()
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, m._load_chart, symbol)
+    except Exception as e:
+        logger.warning(f"_ensure_chart_bg {symbol}: {e}")
+
+
 @app.get("/api/absorption/{symbol:path}")
 async def api_absorption(
     symbol:     str,
@@ -425,6 +483,11 @@ async def api_absorption(
     lookback:   int   = 4900,
 ):
     import numpy as np
+
+    cache_key = ("absorption", symbol, tf, mode, percentile, manual_vol, lookback)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     m = get_manager()
     await m.ensure_tf(symbol, "1m")
@@ -462,10 +525,12 @@ async def api_absorption(
             if not last_val.empty:
                 auto_thresh = float(last_val.iloc[-1])
 
-    return {
-        "signals":    absorption_to_json(result),
+    response = {
+        "signals":     absorption_to_json(result),
         "auto_thresh": auto_thresh,
     }
+    _cache_set(cache_key, response)
+    return response
 
 
 @app.get("/api/poc/{symbol:path}")
@@ -477,6 +542,11 @@ async def api_poc(
     poc1w:  bool = True,
     poc1m:  bool = False,
 ):
+    cache_key = ("poc", symbol, tf, poc4h, poc1d, poc1w, poc1m)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     m = get_manager()
     await m.ensure_tf(symbol, "1m")
     df_1m = m.store.get(symbol, "1m")
@@ -489,9 +559,11 @@ async def api_poc(
     else:
         df = await loop.run_in_executor(None, resample_from_1m, df_1m, tf)
 
-    show = {"4H": poc4h, "1D": poc1d, "1W": poc1w, "1M": poc1m}
-    pocs = calc_all_pocs(df, tf, show)
-    return pocs_to_json(pocs, max_display=MAX_DISPLAY.get(tf, MAX_DISPLAY_DEFAULT))
+    show   = {"4H": poc4h, "1D": poc1d, "1W": poc1w, "1M": poc1m}
+    pocs   = calc_all_pocs(df, tf, show)
+    result = pocs_to_json(pocs, max_display=MAX_DISPLAY.get(tf, MAX_DISPLAY_DEFAULT))
+    _cache_set(cache_key, result)
+    return result
 
 
 @app.get("/api/oi/{symbol:path}")
