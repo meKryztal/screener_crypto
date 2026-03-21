@@ -1876,10 +1876,9 @@ async function applyLimitParams(){
   const minUsd = parseFloat(document.getElementById('limitMinUsdEl')?.value) || 0
   try{
     await fetch(`/api/set_limit_params?mult=${mult}&depth=${depth}&min_usd=${minUsd}`, {method:'POST'})
+    if(activeSymbol && indState.limitlevels) _fetchLimitLevels(activeSymbol)
+    saveSettings()
   }catch(e){}
-  // Always fetch levels and save, regardless of whether the POST succeeded
-  if(activeSymbol && indState.limitlevels) _fetchLimitLevels(activeSymbol)
-  saveSettings()
 }
 async function applyLimitMult(){ await applyLimitParams() }
 
