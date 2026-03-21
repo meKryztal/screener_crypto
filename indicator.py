@@ -41,9 +41,7 @@ def _get_thresh(thresh_series: pd.Series, ts) -> float:
 def _calc_absorption_vec(df: pd.DataFrame, thresh_series: pd.Series) -> pd.DataFrame:
     """
     Векторизованный расчёт absorption для same-TF (1m) случая.
-    Заменяет iterrows() — в ~20x быстрее на больших датафреймах.
     """
-    # Выравниваем thresh по индексу df
     thresh_aligned = thresh_series.reindex(df.index, method="ffill")
 
     h   = df["high"].values
@@ -99,24 +97,25 @@ def _calc_absorption_vec(df: pd.DataFrame, thresh_series: pd.Series) -> pd.DataF
 def _calc_htf_absorption(base_df: pd.DataFrame, ltf_df: pd.DataFrame,
                           thresh_series: pd.Series, freq: str) -> pd.DataFrame:
     """
-    Векторизованный HTF расчёт absorption.
+    Оптимизированный HTF расчёт absorption.
     Для каждой HTF свечи — лучший 1m бар (макс объём с mid в тени).
+    Внутренний Python-цикл заменён на векторный argmax по маске.
     """
     h   = ltf_df["high"].values
     l   = ltf_df["low"].values
     o   = ltf_df["open"].values
     c   = ltf_df["close"].values
     vol = ltf_df["volume"].values
-    ts_arr = ltf_df.index
 
     mid = (h + l) / 2.0
     top = np.maximum(o, c)
     bot = np.minimum(o, c)
-    v_up = (mid >= top) & (mid <= h)
-    v_dn = (mid <= bot) & (mid >= l)
+    v_up      = (mid >= top) & (mid <= h)
+    v_dn      = (mid <= bot) & (mid >= l)
     in_shadow = v_up | v_dn
 
-    # Группируем по HTF периодам
+    base_index_set = set(base_df.index)
+
     grouped = ltf_df.groupby(
         pd.Grouper(freq=freq, label="left", closed="left")
     )
@@ -125,37 +124,32 @@ def _calc_htf_absorption(base_df: pd.DataFrame, ltf_df: pd.DataFrame,
     for base_ts, group in grouped:
         if group.empty:
             continue
-        if base_ts not in base_df.index:
+        if base_ts not in base_index_set:
             continue
 
         thresh = _get_thresh(thresh_series, base_ts)
         if np.isnan(thresh) or thresh <= 0:
             continue
 
-        # Индексы этой группы в ltf_df
+        # Индексы этой группы в ltf_df — векторно
         group_indices = ltf_df.index.searchsorted(group.index)
+        group_indices = group_indices[group_indices < len(vol)]
 
-        best_v   = 0.0
-        best_mid = np.nan
-        best_up  = False
-        best_dn  = False
-
-        for gi in group_indices:
-            if gi >= len(vol):
-                continue
-            v = vol[gi]
-            if np.isnan(v) or v < thresh:
-                continue
-            if not in_shadow[gi]:
-                continue
-            if v > best_v:
-                best_v   = v
-                best_mid = mid[gi]
-                best_up  = bool(v_up[gi])
-                best_dn  = bool(v_dn[gi])
-
-        if best_v <= 0 or np.isnan(best_mid):
+        if len(group_indices) == 0:
             continue
+
+        g_vol      = vol[group_indices]
+        g_shadow   = in_shadow[group_indices]
+        valid_mask = g_shadow & ~np.isnan(g_vol) & (g_vol >= thresh)
+
+        if not valid_mask.any():
+            continue
+
+        # Находим argmax объёма среди валидных баров без Python-цикла
+        masked_vol = np.where(valid_mask, g_vol, 0.0)
+        best_local = int(np.argmax(masked_vol))
+        best_gi    = group_indices[best_local]
+        best_v     = float(vol[best_gi])
 
         ratio    = best_v / thresh
         size_cat = 4 if ratio >= 4 else 3 if ratio >= 3 else 2 if ratio >= 2 else 1
@@ -163,10 +157,10 @@ def _calc_htf_absorption(base_df: pd.DataFrame, ltf_df: pd.DataFrame,
         results.append({
             "ts":       base_ts,
             "base_ts":  base_ts,
-            "mid":      float(best_mid),
-            "is_up":    best_up,
-            "is_dn":    best_dn,
-            "vol":      float(best_v),
+            "mid":      float(mid[best_gi]),
+            "is_up":    bool(v_up[best_gi]),
+            "is_dn":    bool(v_dn[best_gi]),
+            "vol":      best_v,
             "size_cat": int(size_cat),
             "thresh":   float(thresh),
         })
@@ -233,34 +227,63 @@ def _empty() -> pd.DataFrame:
 
 
 def absorption_to_json(df: pd.DataFrame) -> list:
+    """
+    Оптимизировано: убран iterrows(), заменён на векторные операции.
+    """
     if df.empty:
         return []
-    out = []
-    for ts, row in df.iterrows():
-        out.append({
-            "ts":       int(ts.timestamp() * 1000),
-            "base_ts":  int(row["base_ts"].timestamp() * 1000),
-            "mid":      float(row["mid"]),
-            "is_up":    bool(row["is_up"]),
-            "is_dn":    bool(row["is_dn"]),
-            "vol":      float(row["vol"]),
-            "size_cat": int(row["size_cat"]),
-            "thresh":   float(row["thresh"]),
-        })
-    return out
+
+    ts_ms   = (df.index.astype(np.int64) // 1_000_000).tolist()
+    base_ms = (df["base_ts"].values.astype(np.int64) // 1_000_000).tolist()
+
+    return [
+        {
+            "ts":       t,
+            "base_ts":  b,
+            "mid":      float(m),
+            "is_up":    bool(u),
+            "is_dn":    bool(d),
+            "vol":      float(v),
+            "size_cat": int(s),
+            "thresh":   float(th),
+        }
+        for t, b, m, u, d, v, s, th in zip(
+            ts_ms,
+            base_ms,
+            df["mid"].tolist(),
+            df["is_up"].tolist(),
+            df["is_dn"].tolist(),
+            df["vol"].tolist(),
+            df["size_cat"].tolist(),
+            df["thresh"].tolist(),
+        )
+    ]
 
 
 def ohlcv_to_json(df: pd.DataFrame) -> list:
+    """
+    Оптимизировано: убран iterrows(), заменён на векторные операции.
+    """
     if df is None or df.empty:
         return []
-    out = []
-    for ts, row in df.iterrows():
-        out.append({
-            "time":   int(ts.timestamp()),
-            "open":   float(row["open"]),
-            "high":   float(row["high"]),
-            "low":    float(row["low"]),
-            "close":  float(row["close"]),
-            "volume": float(row["volume"]),
-        })
-    return out
+
+    ts_sec = (df.index.astype(np.int64) // 1_000_000_000).tolist()
+
+    return [
+        {
+            "time":   t,
+            "open":   float(o),
+            "high":   float(h),
+            "low":    float(l),
+            "close":  float(c),
+            "volume": float(v),
+        }
+        for t, o, h, l, c, v in zip(
+            ts_sec,
+            df["open"].tolist(),
+            df["high"].tolist(),
+            df["low"].tolist(),
+            df["close"].tolist(),
+            df["volume"].tolist(),
+        )
+    ]
