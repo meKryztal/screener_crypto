@@ -19,7 +19,7 @@
 ## Быстрый старт
 
 ```bash
-pip install fastapi uvicorn ccxt ccxt.pro pandas pyarrow aiohttp requests statistics python-dotenv
+pip install fastapi uvicorn ccxt pandas pyarrow aiohttp requests statistics python-dotenv
 
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
