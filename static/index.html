@@ -182,6 +182,10 @@ body{height:100%;height:100dvh;overflow:hidden;background:var(--bg0);color:var(-
 .charts-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0;position:relative}
 .main-pane{flex:1;position:relative;min-height:0}
 #mainChart{width:100%;height:100%;position:relative}
+#chartLoader{display:none;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(13,13,13,.6);z-index:500;align-items:center;justify-content:center;pointer-events:none;transition:left .25s ease,top .22s ease}
+#chartLoader.active{display:flex}
+@keyframes _spin{to{transform:rotate(360deg)}}
+#chartLoader svg{width:40px;height:40px;animation:_spin .75s linear infinite}
 .sub-pane{position:relative;flex-shrink:0;border-top:1px solid var(--border);display:none}
 .sub-pane.visible{display:block}
 .sub-pane-label{position:absolute;top:3px;left:6px;font-size:9px;color:var(--t2);
@@ -379,6 +383,7 @@ canvas#domCanvas{position:absolute;pointer-events:none;z-index:99;top:0;left:0}
         </div>
       </div>
       <div class="main-pane" id="mainPane">
+        <div id="chartLoader"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="20" cy="20" r="16" stroke="rgba(255,255,255,.12)" stroke-width="3.5"/><path d="M20 4a16 16 0 0 1 16 16" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round"/></svg></div>
         <canvas id="domCanvas"></canvas>
         <canvas id="bubbleCanvas"></canvas>
         <canvas id="previewCanvas"></canvas>
@@ -2302,8 +2307,22 @@ async function reloadCurrentSymbol(){
   }
 }
 
+function _showChartLoader(){
+  const el = document.getElementById('chartLoader')
+  if(!el) return
+  // Отступ слева: скринер открыт → его ширина, иначе 0
+  const sideW = screenerVisible ? parseInt(getComputedStyle(document.documentElement).getPropertyValue('--side')) : 0
+  // Отступ сверху: панель индикаторов открыта → её реальная высота
+  const indPanel = document.getElementById('indPanel')
+  const indH = (indPanel && indPanel.classList.contains('open')) ? indPanel.getBoundingClientRect().height : 0
+  el.style.left = sideW + 'px'
+  el.style.top  = indH + 'px'
+  el.classList.add('active')
+}
+
 async function loadChart(symbol,tf){
   tf=tf||activeTF; activeSymbol=symbol; activeTF=tf
+  _showChartLoader()
   document.querySelectorAll('.sym-row').forEach(r=>r.classList.toggle('active',r.dataset.sym===symbol))
   const info=symbols.find(s=>s.symbol===symbol)
   if(info)updateHeader(symbol,info.price,info.change)
@@ -2338,6 +2357,7 @@ async function loadChart(symbol,tf){
     }
     const closedBars=bars.length>1?bars.slice(0,-1):bars
     candles.setData(closedBars)
+    document.getElementById('chartLoader').classList.remove('active')
     currentBars=closedBars
     if(bars.length)updateOHLC(bars[bars.length-1])
     mainChart.timeScale().scrollToRealTime()
@@ -2351,7 +2371,7 @@ async function loadChart(symbol,tf){
     }catch(e){}
     mainChart.applyOptions({rightPriceScale:{autoScale:true,scaleMargins:{top:0.1,bottom:0.1}}})
     rebuildIndicators(bars)
-  }catch(e){console.error('bars:',e)}
+  }catch(e){console.error('bars:',e);document.getElementById('chartLoader').classList.remove('active')}
 
   // ── Ждём остальные (они уже шли параллельно с bars) ────────────────────────
   clearPocSeries()
