@@ -1,10 +1,4 @@
-"""
-poc_indicator.py — расчёт POC (Point of Control)
-ОПТИМИЗАЦИЯ:
-  - calc_poc_for_period: убран iterrows() + вложенный цикл по бинам,
-    заменён на np.add.at (векторное распределение объёма по уровням)
-  - calc_poc_series: кэширование завершённых периодов
-"""
+
 
 import numpy as np
 import pandas as pd
@@ -32,13 +26,18 @@ POC_COLORS = {
     "1Y": "#9467bd",
 }
 
-FREQ_MAP = {
-    "4H": "4h",
-    "1D": "D",
-    "1W": "W",
-    "1M": "ME",
-    "1Y": "YE",
-}
+def _make_freq_map():
+    """Return frequency aliases compatible with the installed pandas version."""
+    import pandas as pd
+    try:
+        pd.tseries.frequencies.to_offset("ME")
+        # pandas >= 2.2
+        return {"4H": "4h", "1D": "D", "1W": "W", "1M": "ME", "1Y": "YE"}
+    except ValueError:
+        # pandas < 2.2
+        return {"4H": "4h", "1D": "D", "1W": "W", "1M": "M",  "1Y": "A"}
+
+FREQ_MAP = _make_freq_map()
 
 
 def auto_incr(df: pd.DataFrame) -> float:
@@ -59,8 +58,8 @@ def round_to_level(v, step):
 
 def calc_poc_for_period(period_df: pd.DataFrame, step: float) -> float:
     """
-    Оптимизировано: убран iterrows() + вложенный Python-цикл по бинам.
-    Векторное распределение объёма через np.add.at.
+    Векторизованный расчёт POC через np.repeat + np.bincount.
+    Полностью без Python-цикла по барам.
     """
     if period_df.empty or step <= 0:
         return np.nan
@@ -75,21 +74,28 @@ def calc_poc_for_period(period_df: pd.DataFrame, step: float) -> float:
 
     levels = np.arange(lb, ub + step, step)
     n      = len(levels)
-    volumes = np.zeros(n)
 
     lo  = period_df["low"].values
     hi  = period_df["high"].values
     vol = period_df["volume"].values
 
-    v_lo_idx = np.clip(np.floor((lo - lb) / step).astype(int), 0, n - 1)
-    v_hi_idx = np.clip(np.floor((hi - lb) / step).astype(int), 0, n - 1)
-    tks      = np.maximum(1, v_hi_idx - v_lo_idx)
-    v_per_bin = vol / tks
+    lo_idx = np.clip(np.floor((lo - lb) / step).astype(np.int64), 0, n - 1)
+    hi_idx = np.clip(np.floor((hi - lb) / step).astype(np.int64), 0, n - 1)
+    tks    = np.maximum(1, hi_idx - lo_idx)
+    v_per  = vol / tks
 
-    # Цикл по барам (не по бинам) — намного быстрее при большом числе уровней
-    for i in range(len(lo)):
-        end = max(v_hi_idx[i], v_lo_idx[i] + 1)
-        np.add.at(volumes, np.arange(v_lo_idx[i], end), v_per_bin[i])
+    # Количество бинов на каждый бар: hi_idx - lo_idx + 1
+    counts = (hi_idx - lo_idx + 1).astype(np.int64)
+
+    # Плоский массив смещений [0..c-1] для каждого бара — полностью векторизовано.
+    # Пример: counts=[2,3] → offsets=[0,1, 0,1,2]
+    starts_flat = np.repeat(np.cumsum(np.concatenate([[0], counts[:-1]])), counts)
+    offsets = np.arange(int(counts.sum()), dtype=np.int64) - starts_flat
+
+    all_idxs = np.repeat(lo_idx, counts) + offsets
+    all_vols = np.repeat(v_per,  counts)
+
+    volumes = np.bincount(all_idxs, weights=all_vols, minlength=n)
 
     if volumes.max() == 0:
         return float(levels[n // 2])
