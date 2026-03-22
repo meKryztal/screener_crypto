@@ -1,10 +1,4 @@
-"""
-indicator.py — логика 1:1 из оригинального Pine скрипта
-ОПТИМИЗАЦИЯ: векторизация через NumPy/Pandas, убраны iterrows()
-- На 1m TF: проверяет текущую свечу (mid в тени тела)
-- На HTF: из всех 1m баров внутри HTF свечи берёт один с макс объёмом
-- Пузырь рисуется на координате HTF свечи (как в Pine plotshape)
-"""
+
 
 import pandas as pd
 import numpy as np
@@ -179,13 +173,15 @@ def calc_absorption(base_df:    pd.DataFrame,
                     mode:       str   = "Auto",
                     manual_vol: float = 100.0,
                     percentile: float = 99.0,
-                    lookback:   int   = 4900) -> pd.DataFrame:
+                    lookback:   int   = 4900) -> tuple:
     """
     Логика 1:1 из Pine скрипта, оптимизирована через векторизацию.
+    #2: теперь возвращает (DataFrame, last_thresh: float|None) —
+        чтобы api_absorption не пересчитывал thresh_series второй раз.
     """
 
     if base_df is None or base_df.empty:
-        return _empty()
+        return _empty(), None
 
     is_same_tf = (base_tf == LTF)
 
@@ -208,16 +204,22 @@ def calc_absorption(base_df:    pd.DataFrame,
         else:
             thresh_series = pd.Series(manual_vol, index=ltf_df.index)
 
+    # Извлекаем последнее валидное значение порога для ответа API
+    last_thresh: Optional[float] = None
+    ts_nonan = thresh_series.dropna()
+    if not ts_nonan.empty:
+        last_thresh = float(ts_nonan.iloc[-1])
+
     # ── Same TF (1m) — векторизованный расчёт
     if is_same_tf:
-        return _calc_absorption_vec(base_df, thresh_series)
+        return _calc_absorption_vec(base_df, thresh_series), last_thresh
 
     # ── HTF — оптимизированный расчёт
     if ltf_df is None or ltf_df.empty:
-        return _empty()
+        return _empty(), last_thresh
 
     freq = TF_PANDAS.get(base_tf, "5min")
-    return _calc_htf_absorption(base_df, ltf_df, thresh_series, freq)
+    return _calc_htf_absorption(base_df, ltf_df, thresh_series, freq), last_thresh
 
 
 def _empty() -> pd.DataFrame:
