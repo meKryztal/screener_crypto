@@ -38,9 +38,10 @@ logger = logging.getLogger(__name__)
 # ── Константы ─────────────────────────────────────────────────────────────────
 _WS_BASE          = "wss://fstream.binance.com/stream"
 _REST_URL         = "https://fapi.binance.com/fapi/v1/depth"
-_SNAPSHOT_DEPTH   = 1000      # уровней в REST снапшоте
+_SNAPSHOT_DEPTH   = 500      # уровней в REST снапшоте
 _WS_CHUNK_SIZE    = 200       # символов на одно WS соединение
-_SNAP_RATE        = 2         # REST снапшотов в секунду при инициализации (2/s = 120/min)
+_SNAP_CONCURRENCY = 2         # параллельных REST запросов снапшота
+_SNAP_INTERVAL    = 0.60      # сек между запросами внутри одного слота (1.6/сек × 2 слота ≈ 3/сек, weight≈30/сек << лимит 2400/мин)
 _REST_SESSION     = requests.Session()
 _REST_SESSION.headers.update({"Connection": "keep-alive"})
 
@@ -202,8 +203,7 @@ class OrderBookManager:
         self._running:  bool                       = False
         self._tasks:    List[asyncio.Task]         = []
         # Очередь для ресинхронизации: символы которым нужен новый снапшот
-        # Создаём в start() чтобы попасть в правильный event loop (Python 3.8)
-        self._resync_q: asyncio.Queue              = None
+        self._resync_q: asyncio.Queue              = asyncio.Queue()
 
     def get(self, symbol: str) -> Optional[OrderBook]:
         return self._books.get(symbol)
@@ -216,8 +216,7 @@ class OrderBookManager:
         return book.get_bids(depth), book.get_asks(depth)
 
     async def start(self, symbols: List[str]):
-        self._running  = True
-        self._resync_q = asyncio.Queue()  # создаём здесь — гарантированно в нужном loop
+        self._running = True
 
         # Инициализируем пустые стаканы
         for sym in symbols:
@@ -261,12 +260,6 @@ class OrderBookManager:
                     params={"symbol": binance_sym, "limit": _SNAPSHOT_DEPTH},
                     timeout=10,
                 )
-                # Читаем weight — при приближении к лимиту притормаживаем
-                used = int(r.headers.get("X-MBX-USED-WEIGHT-1M", 0))
-                if used > 1800:
-                    wait = 5 * (attempt + 1)
-                    logger.warning(f"Binance weight {used}/2400 — sleeping {wait}s")
-                    time.sleep(wait)
 
                 if r.status_code == 429:
                     wait = 30 * (attempt + 1)
@@ -275,7 +268,18 @@ class OrderBookManager:
                     continue
 
                 r.raise_for_status()
-                return r.json()
+                result = r.json()
+
+                # Проверяем weight ПОСЛЕ успешного запроса.
+                # Пауза нужна чтобы следующий запрос этого потока не превысил
+                # лимит — но текущий результат уже получен и будет возвращён.
+                used = int(r.headers.get("X-MBX-USED-WEIGHT-1M", 0))
+                if used > 1800:
+                    wait = 5
+                    logger.warning(f"Binance weight {used}/2400 — sleeping {wait}s")
+                    time.sleep(wait)
+
+                return result
             except Exception as e:
                 if "429" in str(e) or "Too Many" in str(e):
                     wait = 30 * (attempt + 1)
@@ -289,27 +293,38 @@ class OrderBookManager:
 
     async def _snapshot_loader(self, symbols: List[str]):
         """
-        Загружает REST снапшоты для всех символов с ограничением скорости.
-        _SNAP_RATE штук в секунду.
+        Загружает REST снапшоты параллельно (_SNAP_CONCURRENCY потоков),
+        каждый слот делает не более 1 запроса в _SNAP_INTERVAL секунд.
+        Итого: CONCURRENCY / SNAP_INTERVAL запросов/сек.
+        50 символов, 4 слота, 200мс = ~2.5 сек вместо 25 сек.
         """
-        loop     = asyncio.get_event_loop()
-        interval = 1.0 / _SNAP_RATE   # сек между запросами
+        loop = asyncio.get_event_loop()
+        sem  = asyncio.Semaphore(_SNAP_CONCURRENCY)
 
-        for sym in symbols:
-            if not self._running:
-                return
-            bsym = _ccxt_to_binance(sym)
-            data = await loop.run_in_executor(None, self._fetch_snapshot, bsym)
-            if data:
-                book = self._books.get(sym)
-                if book:
-                    book.apply_snapshot(data)
-                    # Применяем накопленный буфер
-                    self._drain_buffer(sym, book)
-                    logger.debug(f"snapshot OK: {sym} lastUpdateId={book.last_update_id}")
-            await asyncio.sleep(interval)
+        async def _load_one(sym: str):
+            async with sem:
+                if not self._running:
+                    return
+                bsym = _ccxt_to_binance(sym)
+                t0   = loop.time()
+                data = await loop.run_in_executor(None, self._fetch_snapshot, bsym)
+                if data:
+                    book = self._books.get(sym)
+                    if book:
+                        book.apply_snapshot(data)
+                        self._drain_buffer(sym, book)
+                        logger.debug(f"snapshot OK: {sym} lastUpdateId={book.last_update_id}")
+                # Выдерживаем минимальный интервал внутри слота
+                elapsed = loop.time() - t0
+                wait    = max(0.0, _SNAP_INTERVAL - elapsed)
+                if wait > 0:
+                    await asyncio.sleep(wait)
 
-        logger.info("OrderBook: все снапшоты загружены")
+        tasks = [asyncio.create_task(_load_one(sym)) for sym in symbols]
+        await asyncio.gather(*tasks)
+        loaded = sum(1 for sym in symbols
+                     if self._books.get(sym) and self._books[sym].last_update_id > 0)
+        logger.info(f"OrderBook: снапшоты загружены {loaded}/{len(symbols)}")
 
     def _drain_buffer(self, symbol: str, book: "OrderBook"):
         """
@@ -322,8 +337,7 @@ class OrderBookManager:
             ok = book.apply_event(event)
             if not ok:
                 # Разрыв — буфер уже очищен, ставим в очередь на resync
-                if self._resync_q is not None:
-                    self._resync_q.put_nowait(symbol)
+                self._resync_q.put_nowait(symbol)
                 return
 
     # ── WS чанк ───────────────────────────────────────────────────────────────
@@ -396,8 +410,7 @@ class OrderBookManager:
                                 book.synced         = False
                                 book.last_update_id = 0
                                 book._buf           = []
-                                if self._resync_q is not None:
-                                    self._resync_q.put_nowait(ccxt_sym)
+                                self._resync_q.put_nowait(ccxt_sym)
 
                         except Exception as e:
                             logger.debug(f"OrderBook WS parse: {e}")
@@ -440,6 +453,7 @@ class OrderBookManager:
                     book._buf           = []
 
                 await asyncio.sleep(1.0)
+                _in_resync.discard(sym)
 
                 bsym = _ccxt_to_binance(sym)
                 data = await loop.run_in_executor(None, self._fetch_snapshot, bsym)
@@ -449,7 +463,6 @@ class OrderBookManager:
                         book.apply_snapshot(data)
                         self._drain_buffer(sym, book)
                         logger.debug(f"resync OK: {sym} id={book.last_update_id}")
-                _in_resync.discard(sym)  # снимаем блокировку только после завершения
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
