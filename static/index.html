@@ -63,6 +63,20 @@ body{height:100%;height:100dvh;overflow:hidden;background:var(--bg0);color:var(-
   font-family:inherit;font-size:11px;padding:3px 8px;cursor:pointer;
   transition:all .15s;display:flex;align-items:center;gap:5px}
 .theme-btn:hover{background:var(--bg3);color:var(--t0)}
+.utc-btn{background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--t2);
+  font-family:inherit;font-size:11px;padding:3px 8px;cursor:pointer;margin-right:6px;
+  transition:all .15s;letter-spacing:.3px;white-space:nowrap}
+.utc-btn:hover{background:var(--bg3);color:var(--t0)}
+.utc-btn.active{border-color:var(--blue);color:var(--blue)}
+.utc-dropdown{position:absolute;top:calc(100% + 4px);right:0;z-index:9999;
+  background:var(--bg2);border:1px solid var(--border);border-radius:6px;
+  min-width:130px;box-shadow:0 4px 16px rgba(0,0,0,.35);overflow:hidden;display:none}
+.utc-dropdown.open{display:block}
+.utc-opt{padding:6px 12px;font-size:11px;font-family:inherit;cursor:pointer;
+  color:var(--t1);transition:background .1s;white-space:nowrap}
+.utc-opt:hover{background:var(--bg3);color:var(--t0)}
+.utc-opt.selected{color:var(--blue)}
+.utc-wrap{position:relative;display:inline-block;margin-right:6px}
 
 .layout{display:flex;flex:1;overflow:hidden;min-height:0;position:relative}
 .side{width:var(--side);background:var(--bg1);border-right:1px solid var(--border);
@@ -270,6 +284,10 @@ canvas#domCanvas{position:absolute;pointer-events:none;z-index:99;top:0;left:0}
       </svg>
     </button>
   </div>
+  <div class="utc-wrap" id="utcWrap">
+    <button class="utc-btn" id="utcBtn" onclick="toggleUTCDropdown(event)" title="Выбрать часовой пояс">UTC+0 ▾</button>
+    <div class="utc-dropdown" id="utcDropdown"></div>
+  </div>
   <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">
     <span id="themeIcon">☀️</span><span id="themeTxt">Light</span>
   </button>
@@ -476,6 +494,7 @@ function saveSettings(){
         indPanelOpen: document.getElementById('indPanel')?.classList.contains('open'),
         screenerVisible,
         theme: currentTheme,
+        utcOffset,
         limitMult:   parseFloat(document.getElementById('limitMultEl')?.value)   || 8,
       }
       await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)})
@@ -709,6 +728,109 @@ let currentTheme = _saved.theme || 'dark'
 document.documentElement.setAttribute('data-theme', currentTheme)
 updateThemeBtn()
 
+// ─── UTC / Timezone offset ───
+// utcOffset: целое число минут сдвига от UTC (0 = UTC, 60 = UTC+1, -300 = UTC-5 и т.д.)
+// null = локальное время браузера
+let utcOffset = (_saved.utcOffset !== undefined) ? _saved.utcOffset : 0
+
+const _UTC_ZONES = [
+  { label: 'Local (браузер)', offset: null },
+  { label: 'UTC−12', offset: -720 },
+  { label: 'UTC−11', offset: -660 },
+  { label: 'UTC−10', offset: -600 },
+  { label: 'UTC−9',  offset: -540 },
+  { label: 'UTC−8',  offset: -480 },
+  { label: 'UTC−7',  offset: -420 },
+  { label: 'UTC−6',  offset: -360 },
+  { label: 'UTC−5',  offset: -300 },
+  { label: 'UTC−4',  offset: -240 },
+  { label: 'UTC−3',  offset: -180 },
+  { label: 'UTC−2',  offset: -120 },
+  { label: 'UTC−1',  offset:  -60 },
+  { label: 'UTC+0',  offset:    0 },
+  { label: 'UTC+1',  offset:   60 },
+  { label: 'UTC+2',  offset:  120 },
+  { label: 'UTC+3',  offset:  180 },
+  { label: 'UTC+4',  offset:  240 },
+  { label: 'UTC+5',  offset:  300 },
+  { label: 'UTC+5:30', offset: 330 },
+  { label: 'UTC+6',  offset:  360 },
+  { label: 'UTC+7',  offset:  420 },
+  { label: 'UTC+8',  offset:  480 },
+  { label: 'UTC+9',  offset:  540 },
+  { label: 'UTC+10', offset:  600 },
+  { label: 'UTC+11', offset:  660 },
+  { label: 'UTC+12', offset:  720 },
+]
+
+function _buildUTCDropdown(){
+  const dd = document.getElementById('utcDropdown')
+  if(!dd) return
+  dd.innerHTML = ''
+  for(const z of _UTC_ZONES){
+    const el = document.createElement('div')
+    el.className = 'utc-opt' + (z.offset === utcOffset ? ' selected' : '')
+    el.textContent = z.label
+    el.onclick = (e)=>{ e.stopPropagation(); selectUTCZone(z.offset) }
+    dd.appendChild(el)
+  }
+}
+
+function _utcBtnLabel(){
+  if(utcOffset === null){
+    const lm = -new Date().getTimezoneOffset()
+    const sign = lm >= 0 ? '+' : '−'
+    const h = Math.floor(Math.abs(lm)/60), m = Math.abs(lm)%60
+    return `Local (UTC${sign}${h}${m?':'+String(m).padStart(2,'0'):''})`
+  }
+  if(utcOffset === 0) return 'UTC+0'
+  const sign = utcOffset > 0 ? '+' : '−'
+  const abs  = Math.abs(utcOffset)
+  const h    = Math.floor(abs/60), m = abs%60
+  return `UTC${sign}${h}${m ? ':'+String(m).padStart(2,'0') : ''}`
+}
+
+function applyUTC(){
+  mainChart.applyOptions({
+    localization: {
+      timeFormatter: ts => {
+        // ts — unix seconds
+        const offsetMs = (utcOffset !== null ? utcOffset : -new Date().getTimezoneOffset()) * 60000
+        const d  = new Date(ts * 1000 + offsetMs)
+        const hh = String(d.getUTCHours()).padStart(2,'0')
+        const mm = String(d.getUTCMinutes()).padStart(2,'0')
+        const DD = String(d.getUTCDate()).padStart(2,'0')
+        const MO = String(d.getUTCMonth()+1).padStart(2,'0')
+        const YY = d.getUTCFullYear()
+        return `${DD}.${MO}.${YY} ${hh}:${mm}`
+      }
+    }
+  })
+  const btn = document.getElementById('utcBtn')
+  if(btn) btn.textContent = _utcBtnLabel() + ' ▾'
+  const isNonDefault = utcOffset !== 0
+  if(btn) btn.classList.toggle('active', isNonDefault)
+  _buildUTCDropdown()
+}
+
+function selectUTCZone(offset){
+  utcOffset = offset
+  applyUTC()
+  document.getElementById('utcDropdown')?.classList.remove('open')
+  saveSettings()
+}
+
+function toggleUTCDropdown(e){
+  e.stopPropagation()
+  _buildUTCDropdown()
+  document.getElementById('utcDropdown')?.classList.toggle('open')
+}
+
+// Закрываем дропдаун при клике вне него
+document.addEventListener('click', ()=>{
+  document.getElementById('utcDropdown')?.classList.remove('open')
+})
+
 function toggleTheme(){
   currentTheme = currentTheme==='dark'?'light':'dark'
   document.documentElement.setAttribute('data-theme', currentTheme)
@@ -787,6 +909,7 @@ mainChart.subscribeCrosshairMove(p=>{
 })
 mainChart.timeScale().subscribeVisibleTimeRangeChange(scheduleRedraw)
 mainChart.timeScale().subscribeVisibleLogicalRangeChange(scheduleRedraw)
+applyUTC()   // применяем сохранённый UTC-режим сразу после создания графика
 
 let _rafId=null
 function scheduleRedraw(){
@@ -1686,7 +1809,12 @@ function drawCanvasShape(d, c){
       const maxTotal=Math.max(...totals,1e-12)
       const sumAll=totals.reduce((a,b)=>a+b,0)
       const barMaxW=rw*0.85
-      const binH=rh/numBins
+      // Use actual data bounds for bin rendering — prevents distortion when box dragged into empty space
+      const dataRyTop = candles.priceToCoordinate(vp.pMax)
+      const dataRyBot = candles.priceToCoordinate(vp.pMin)
+      if(dataRyTop===null||dataRyBot===null){c.restore();return}
+      const dataRh = dataRyBot - dataRyTop  // pixels for the actual data range
+      const binH = dataRh / numBins
       // POC
       let pocIdx=0,pocVol=0
       totals.forEach((v,i)=>{if(v>pocVol){pocVol=v;pocIdx=i}})
@@ -1702,7 +1830,7 @@ function drawCanvasShape(d, c){
         else break
       }
       for(let i=0;i<numBins;i++){
-        const binY=ry+(numBins-1-i)*binH
+        const binY=dataRyTop+(numBins-1-i)*binH
         const total=totals[i]
         const totalW=(total/maxTotal)*barMaxW
         const isPOC=(i===pocIdx)
@@ -1718,11 +1846,11 @@ function drawCanvasShape(d, c){
         }
       }
       // VAH линия
-      const vahBinY=ry+(numBins-1-vahIdx)*binH
+      const vahBinY=dataRyTop+(numBins-1-vahIdx)*binH
       c.strokeStyle='rgba(24,144,255,0.55)'; c.lineWidth=1; c.setLineDash([4,3])
       c.beginPath(); c.moveTo(rx,vahBinY); c.lineTo(rx+rw,vahBinY); c.stroke()
       // VAL линия
-      const valBinY=ry+(numBins-1-valIdx)*binH+binH
+      const valBinY=dataRyTop+(numBins-1-valIdx)*binH+binH
       c.beginPath(); c.moveTo(rx,valBinY); c.lineTo(rx+rw,valBinY); c.stroke()
       c.setLineDash([])
       // Подписи VAH/VAL
@@ -2007,6 +2135,37 @@ function spikeClass(v){
 }
 
 // ─── List ───
+// #9: diff-обновление скринера вместо полного innerHTML rebuild.
+// При 400+ символах это устраняет большой DOM-reflow при каждом pollSymbols().
+// Стратегия:
+//   - rowCache хранит {symbol → {row, priceEl, col3El, nameEl}}
+//   - renderList() при смене сортировки/фильтра пересобирает список
+//     и переставляет существующие узлы или создаёт новые (но не дублирует)
+//   - updateScreenerRows() вызывается из pollSymbols() и меняет только данные
+
+function _buildCol3Html(s) {
+  const chg=s.change,cc=chg>0?'pos':chg<0?'neg':'neu'
+  const cs=chg!=null?(chg>0?'+':'')+chg.toFixed(2)+'%':'—'
+  if(sortField==='name'||sortField==='change'){
+    return`<div class="sym-chg ${cc}">${cs}</div>`
+  } else if(sortField==='vol24h'){
+    return`<div class="sym-vol">${fmtVol(s.vol24h)}</div>`
+  } else if(sortField==='spike_2h_24h'){
+    return`<div class="${spikeClass(s.spike_2h_24h)}">${fmtSpike(s.spike_2h_24h)}</div>`
+  } else if(sortField==='pump_3h'){
+    const pv=s.pump_3h
+    const cls=pv==null?'sym-vol':pv>=0?'pump-val':'pump-val neg'
+    return`<div class="${cls}">${pv==null?'—':(pv>0?'+':'')+pv.toFixed(2)+'%'}</div>`
+  } else if(sortField==='anomaly'){
+    const an=_anomalyData[s.symbol]
+    if(!an) return`<div class="sym-vol">—</div>`
+    const cls=an.side==='bid'?'anom-bid':'anom-ask'
+    const arrow=an.side==='bid'?'↓':'↑'
+    return`<div class="${cls}">${arrow}${an.distance_pct.toFixed(3)}%</div>`
+  }
+  return`<div class="sym-vol">${fmtVol(s.vol24h)}</div>`
+}
+
 function renderList(){
   const q=document.getElementById('srch').value.toLowerCase()
   let list=[...symbols]
@@ -2019,60 +2178,84 @@ function renderList(){
     else if(sortField==='spike_2h_24h'){va=a.spike_2h_24h||0;vb=b.spike_2h_24h||0}
     else if(sortField==='pump_3h'){va=a.pump_3h||0;vb=b.pump_3h||0}
     else if(sortField==='anomaly'){
-      // Sort by distance ascending (closest first), no-anomaly symbols go to bottom
       const da=_anomalyData[a.symbol]?.distance_pct
       const db=_anomalyData[b.symbol]?.distance_pct
       if(da==null&&db==null)return 0
       if(da==null)return 1
-      if(db==null)return -1
+      if(db==null)return-1
       return da-db
     }
     if(typeof va==='string')return sortAsc?va.localeCompare(vb):vb.localeCompare(va)
     return sortAsc?va-vb:vb-va
   })
+
   const container=document.getElementById('symList')
-  container.innerHTML=''
-  for(const k in rowCache)delete rowCache[k]
 
-  list.forEach(s=>{
-    const short=s.symbol.replace('/USDT:USDT','').replace('/USDT','')
-    const chg=s.change,cc=chg>0?'pos':chg<0?'neg':'neu'
-    const cs=chg!=null?(chg>0?'+':'')+chg.toFixed(2)+'%':'—'
+  // Создаём/обновляем строки для всех видимых символов
+  const symSet = new Set(list.map(s=>s.symbol))
 
-    let col3html
-    if(sortField==='name'||sortField==='change'){
-      col3html=`<div class="sym-chg ${cc}">${cs}</div>`
-    } else if(sortField==='vol24h'){
-      col3html=`<div class="sym-vol">${fmtVol(s.vol24h)}</div>`
-    } else if(sortField==='spike_2h_24h'){
-      col3html=`<div class="${spikeClass(s.spike_2h_24h)}">${fmtSpike(s.spike_2h_24h)}</div>`
-    } else if(sortField==='pump_3h'){
-      const pv=s.pump_3h
-      const cls=pv==null?'sym-vol':pv>=0?'pump-val':'pump-val neg'
-      col3html=`<div class="${cls}">${pv==null?'—':(pv>0?'+':'')+pv.toFixed(2)+'%'}</div>`
-    } else if(sortField==='anomaly'){
-      const an=_anomalyData[s.symbol]
-      if(!an) col3html=`<div class="sym-vol">—</div>`
-      else {
-        const cls=an.side==='bid'?'anom-bid':'anom-ask'
-        const arrow=an.side==='bid'?'↓':'↑'
-        col3html=`<div class="${cls}">${arrow}${an.distance_pct.toFixed(3)}%</div>`
-      }
-    } else {
-      col3html=`<div class="sym-vol">${fmtVol(s.vol24h)}</div>`
+  // Удаляем строки для символов которых нет в текущем списке
+  for(const sym of Object.keys(rowCache)){
+    if(!symSet.has(sym)){
+      const entry = rowCache[sym]
+      if(entry.row.parentNode === container) container.removeChild(entry.row)
+      delete rowCache[sym]
     }
+  }
 
-    const row=document.createElement('div')
-    row.className=`sym-row ${s.symbol===activeSymbol?'active':''} ${s.loaded?'':'dim'}`
-    row.dataset.sym=s.symbol
-    row.innerHTML=`
-      <div class="sym-name"><div class="pip"></div>${short}</div>
-      <div class="sym-price">${fmt(s.price)}</div>
-      ${col3html}`
-    row.onclick=()=>loadChart(s.symbol)
-    container.appendChild(row)
-    rowCache[s.symbol]={row,priceEl:row.querySelector('.sym-price')}
-  })
+  // Создаём недостающие строки (без вставки в DOM)
+  for(const s of list){
+    if(!rowCache[s.symbol]){
+      const short=s.symbol.replace('/USDT:USDT','').replace('/USDT','')
+      const row=document.createElement('div')
+      row.className=`sym-row ${s.symbol===activeSymbol?'active':''} ${s.loaded?'':'dim'}`
+      row.dataset.sym=s.symbol
+      row.innerHTML=`
+        <div class="sym-name"><div class="pip"></div>${short}</div>
+        <div class="sym-price">${fmt(s.price)}</div>
+        <div class="sym-col3">${_buildCol3Html(s)}</div>`
+      row.onclick=()=>loadChart(s.symbol)
+      rowCache[s.symbol]={
+        row,
+        priceEl: row.querySelector('.sym-price'),
+        col3El:  row.querySelector('.sym-col3'),
+        price:   s.price,
+        col3Key: sortField,
+      }
+    }
+  }
+
+  // Расставляем строки в правильном порядке используя DocumentFragment
+  // (один reflow вместо N insertions)
+  const frag = document.createDocumentFragment()
+  for(const s of list){
+    const entry = rowCache[s.symbol]
+    // Обновляем данные ячеек
+    const newPrice = fmt(s.price)
+    if(entry.priceEl.textContent !== newPrice) entry.priceEl.textContent = newPrice
+    const newCol3 = _buildCol3Html(s)
+    if(entry.col3El.innerHTML !== newCol3) entry.col3El.innerHTML = newCol3
+    // active/dim классы
+    entry.row.className=`sym-row ${s.symbol===activeSymbol?'active':''} ${s.loaded?'':'dim'}`
+    frag.appendChild(entry.row)
+  }
+  container.appendChild(frag)
+}
+
+// Вызывается из pollSymbols() — обновляет только данные без сортировки/DOM-перестановок
+function updateScreenerRows(){
+  const symMap = {}
+  for(const s of symbols) symMap[s.symbol] = s
+  for(const sym of Object.keys(rowCache)){
+    const s = symMap[sym]
+    if(!s) continue
+    const entry = rowCache[sym]
+    const newPrice = fmt(s.price)
+    if(entry.priceEl.textContent !== newPrice) entry.priceEl.textContent = newPrice
+    const newCol3 = _buildCol3Html(s)
+    if(entry.col3El.innerHTML !== newCol3) entry.col3El.innerHTML = newCol3
+    entry.row.className=`sym-row ${sym===activeSymbol?'active':''} ${s.loaded?'':'dim'}`
+  }
 }
 
 // ─── Header ───
@@ -2233,8 +2416,7 @@ function togglePOC(label){
   pocState[label]=!pocState[label]
   const btn=document.querySelector(`.poc-btn[data-poc="${label}"]`)
   if(btn)btn.classList.toggle('on',pocState[label])
-  _syncPOCMaster()
-  if(activeSymbol)loadPOC(activeSymbol)
+  _applyPOCChange()
   saveSettings()
 }
 
@@ -2242,8 +2424,7 @@ function togglePOCFromPanel(label, val){
   pocState[label]=val
   const btn=document.querySelector(`.poc-btn[data-poc="${label}"]`)
   if(btn)btn.classList.toggle('on',val)
-  _syncPOCMaster()
-  if(activeSymbol)loadPOC(activeSymbol)
+  _applyPOCChange()
   saveSettings()
 }
 
@@ -2607,16 +2788,27 @@ function toggleAllPOC(val){
   })
   const el=document.getElementById('ind-poc-all')
   if(el){ el.checked=val; el.indeterminate=false }
-  if(activeSymbol) loadPOC(activeSymbol)
+  _applyPOCChange()
   saveSettings()
 }
 function _syncPOCMaster(){
+  const any  = ['4H','1D','1W','1M'].some(l=>pocState[l])
   const all  = ['4H','1D','1W','1M'].every(l=>pocState[l])
-  const none = ['4H','1D','1W','1M'].every(l=>!pocState[l])
   const el   = document.getElementById('ind-poc-all')
   if(!el) return
-  el.checked       = all
-  el.indeterminate = !all && !none
+  el.checked       = any
+  el.indeterminate = any && !all
+}
+
+// Вызывается из togglePOC — обновляет чекбокс и управляет индикатором
+function _applyPOCChange(){
+  _syncPOCMaster()
+  const any = ['4H','1D','1W','1M'].some(l=>pocState[l])
+  if(!any){
+    clearPocSeries()   // все выключены — убираем линии с графика
+  } else if(activeSymbol){
+    loadPOC(activeSymbol)  // хотя бы один включён — перегружаем
+  }
 }
 
 function showToast(msg){
@@ -2796,7 +2988,8 @@ async function pollSymbols(){
   try{
     const fresh=await fetch('/api/symbols').then(r=>r.json())
     symbols=fresh
-    renderList()
+    // #9: если порядок/фильтр не менялся — только данные, без DOM-перестановок
+    updateScreenerRows()
   }catch(e){}
 }
 
@@ -2822,6 +3015,7 @@ async function _bootstrap(){
   if(_saved.indState)  Object.assign(indState,_saved.indState)
   if(_saved.indPanelOpen!=null) indPanelOpen=_saved.indPanelOpen
   if(_saved.theme){ currentTheme=_saved.theme; document.documentElement.setAttribute('data-theme',currentTheme); updateThemeBtn(); applyChartTheme() }
+  if(_saved.utcOffset !== undefined){ utcOffset=_saved.utcOffset; applyUTC() }
 
   pollStatus(); pollSymbols()
   setInterval(pollStatus, 10000)
