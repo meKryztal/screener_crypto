@@ -355,11 +355,8 @@ canvas#domCanvas{position:absolute;pointer-events:none;z-index:99;top:0;left:0}
         <label class="ind-chk"><input type="checkbox" id="ind-dom" onchange="toggleIndicator('dom',this.checked)"><span class="chk-box"></span>DOM</label>
         <label class="ind-chk"><input type="checkbox" id="ind-limitlevels" onchange="toggleIndicator('limitlevels',this.checked)"><span class="chk-box"></span>Big Bid/Ask</label>
         <span style="color:var(--t2);font-size:10px;margin-left:4px">mult</span>
-        <input class="tb-inp" id="limitMultEl" type="number" value="8" min="2" max="50" step="1" style="width:42px" title="Мультипликатор аномалии">
-        <span style="color:var(--t2);font-size:10px;margin-left:4px">depth</span>
-        <input class="tb-inp" id="limitDepthEl" type="number" value="100" min="5" max="1000" step="5" style="width:50px" title="Глубина стакана">
-        <span style="color:var(--t2);font-size:10px;margin-left:4px">min$</span>
-        <input class="tb-inp" id="limitMinUsdEl" type="number" value="0" min="0" step="1000" style="width:60px" title="Мин. сумма лимитки в USD">
+        <input class="tb-inp" id="limitMultEl" type="number" value="50" min="2" max="200" step="1" style="width:42px" title="Мультипликатор аномалии">
+
         <button class="apply-btn" style="margin-left:4px" onclick="applyLimitParams()">Apply</button>
         </div>
       </div>
@@ -480,8 +477,6 @@ function saveSettings(){
         screenerVisible,
         theme: currentTheme,
         limitMult:   parseFloat(document.getElementById('limitMultEl')?.value)   || 8,
-        limitDepth:  parseInt(document.getElementById('limitDepthEl')?.value)    || 100,
-        limitMinUsd: parseFloat(document.getElementById('limitMinUsdEl')?.value) || 0,
       }
       await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)})
     }catch(e){}
@@ -805,7 +800,7 @@ function scheduleRedraw(){
 const chartsWrap = document.getElementById('chartsWrap')
 
 let vMarginTop = 0.1, vMarginBot = 0.1
-const V_MARGIN_MIN = 0.005, V_MARGIN_MAX = 0.48
+const V_MARGIN_MIN = 0, V_MARGIN_MAX = 0.48
 
 // Use capture:true so we intercept BEFORE LightweightCharts gets the event
 chartsWrap.addEventListener('wheel', e=>{
@@ -1871,14 +1866,12 @@ async function _fetchLimitLevels(symbol){
 }
 
 async function applyLimitParams(){
-  const mult   = parseFloat(document.getElementById('limitMultEl')?.value)   || 8
-  const depth  = parseInt(document.getElementById('limitDepthEl')?.value)    || 100
-  const minUsd = parseFloat(document.getElementById('limitMinUsdEl')?.value) || 0
+  const mult = parseFloat(document.getElementById('limitMultEl')?.value) || 8
   try{
-    await fetch(`/api/set_limit_params?mult=${mult}&depth=${depth}&min_usd=${minUsd}`, {method:'POST'})
-    if(activeSymbol && indState.limitlevels) _fetchLimitLevels(activeSymbol)
-    saveSettings()
+    await fetch(`/api/set_limit_params?mult=${mult}`, {method:'POST'})
   }catch(e){}
+  if(activeSymbol && indState.limitlevels) _fetchLimitLevels(activeSymbol)
+  saveSettings()
 }
 async function applyLimitMult(){ await applyLimitParams() }
 
@@ -2895,9 +2888,7 @@ async function _bootstrap(){
   if(_domSel) _domSel.value=String(domDepth)
   // Restore Big Bid/Ask params and sync to backend
   if(s.limitMult!=null){const el=document.getElementById('limitMultEl');if(el)el.value=s.limitMult}
-  if(s.limitDepth!=null){const el=document.getElementById('limitDepthEl');if(el)el.value=s.limitDepth}
-  if(s.limitMinUsd!=null){const el=document.getElementById('limitMinUsdEl');if(el)el.value=s.limitMinUsd}
-  if(s.limitMult!=null||s.limitDepth!=null||s.limitMinUsd!=null){
+  if(s.limitMult!=null){
     applyLimitParams().catch(()=>{})
   }
 })()
