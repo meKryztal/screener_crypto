@@ -23,6 +23,16 @@ from typing import Dict, List, Optional, Tuple
 import requests
 import websockets
 
+try:
+    from sortedcontainers import SortedList
+    _HAVE_SORTED = True
+except ImportError:
+    _HAVE_SORTED = False
+    logging.getLogger(__name__).warning(
+        "sortedcontainers not installed — falling back to sorted(). "
+        "Run: pip install sortedcontainers"
+    )
+
 logger = logging.getLogger(__name__)
 
 # ── Константы ─────────────────────────────────────────────────────────────────
@@ -47,84 +57,133 @@ def _ccxt_to_binance(sym: str) -> str:
 class OrderBook:
     """
     Локальная копия стакана одного символа.
-    bids/asks хранятся как dict {price_str → qty_float} для O(1) обновлений.
+
+    Хранение уровней:
+      _bids_dict / _asks_dict  — dict {price_float → qty_float} для O(1) обновлений.
+      _bids_sl   / _asks_sl    — SortedList[price_float] для O(log n) вставки/удаления
+                                  и O(1) best_bid/best_ask (первый/последний элемент).
+
+    При наличии пакета sortedcontainers get_bids/get_asks работают за O(depth),
+    а не O(N log N) как раньше.  best_bid/best_ask — O(1) вместо O(N).
+    Без пакета — автоматический fallback на прежнюю sorted() логику.
     """
-    __slots__ = ("bids", "asks", "last_update_id", "synced", "_buf")
+    __slots__ = (
+        "bids", "asks",                   # публичные dict (совместимость)
+        "_bids_sl", "_asks_sl",           # SortedList (None если нет пакета)
+        "last_update_id", "synced", "_buf",
+    )
 
     def __init__(self):
-        self.bids:           Dict[str, float] = {}
-        self.asks:           Dict[str, float] = {}
-        self.last_update_id: int              = 0
-        self.synced:         bool             = False
-        self._buf:           list             = []   # буфер событий до синхронизации
+        # dict {price_float → qty_float}
+        self.bids:           Dict[float, float] = {}
+        self.asks:           Dict[float, float] = {}
+        # SortedList для быстрого доступа к отсортированным ценам
+        if _HAVE_SORTED:
+            self._bids_sl = SortedList()   # возрастающий порядок, best = [-1]
+            self._asks_sl = SortedList()   # возрастающий порядок, best = [0]
+        else:
+            self._bids_sl = None
+            self._asks_sl = None
+        self.last_update_id: int  = 0
+        self.synced:         bool = False
+        self._buf:           list = []
 
     def apply_snapshot(self, data: dict):
         """Применяет REST снапшот."""
-        self.bids = {p: float(q) for p, q in data["bids"]}
-        self.asks = {p: float(q) for p, q in data["asks"]}
+        self.bids = {float(p): float(q) for p, q in data["bids"]}
+        self.asks = {float(p): float(q) for p, q in data["asks"]}
+        if _HAVE_SORTED:
+            self._bids_sl = SortedList(self.bids.keys())
+            self._asks_sl = SortedList(self.asks.keys())
         self.last_update_id = data["lastUpdateId"]
-        self.synced = False   # будет True после первого валидного WS события
+        self.synced = False
 
     def apply_event(self, event: dict) -> bool:
         """
         Применяет WS diff событие.
         Возвращает False если нужна ресинхронизация.
         """
-        U  = event["U"]   # first update id
-        u  = event["u"]   # final update id
-        pu = event.get("pu", None)  # previous final update id
+        U  = event["U"]
+        u  = event["u"]
+        pu = event.get("pu", None)
 
         if not self.synced:
-            # Ждём первое валидное событие: U <= lastUpdateId+1 <= u
             if u < self.last_update_id:
-                return True   # устаревшее — пропускаем
+                return True
             if U > self.last_update_id + 1:
-                return False  # пропустили событие — рестарт
+                return False
             self.synced = True
         else:
-            # Проверяем непрерывность: pu должен == нашему last_update_id
             if pu is not None and pu != self.last_update_id:
-                return False  # разрыв — рестарт
+                return False
 
-        self._apply_delta(self.bids, event.get("b", []))
-        self._apply_delta(self.asks, event.get("a", []))
+        self._apply_delta(self.bids, self._bids_sl, event.get("b", []))
+        self._apply_delta(self.asks, self._asks_sl, event.get("a", []))
         self.last_update_id = u
         return True
 
     @staticmethod
-    def _apply_delta(side: dict, updates: list):
-        for price, qty in updates:
-            qty_f = float(qty)
-            if qty_f == 0.0:
-                side.pop(price, None)
+    def _apply_delta(side_dict: dict, side_sl, updates: list):
+        """
+        Обновляет dict и SortedList одновременно.
+        qty == 0 → удалить уровень, иначе → вставить/обновить.
+        """
+        for price_s, qty_s in updates:
+            price = float(price_s)
+            qty   = float(qty_s)
+            if qty == 0.0:
+                if price in side_dict:
+                    del side_dict[price]
+                    if side_sl is not None:
+                        side_sl.discard(price)
             else:
-                side[price] = qty_f
+                if side_sl is not None and price not in side_dict:
+                    side_sl.add(price)
+                side_dict[price] = qty
 
     def get_bids(self, depth: int = 1000) -> List[Tuple[float, float]]:
-        """Возвращает список (price, qty) отсортированный по убыванию цены."""
-        items = sorted(
-            ((float(p), q) for p, q in self.bids.items()),
-            key=lambda x: -x[0]
-        )
+        """
+        Возвращает список (price, qty) отсортированный по убыванию цены.
+        O(depth) при наличии SortedList, O(N log N) при fallback.
+        """
+        if _HAVE_SORTED and self._bids_sl is not None:
+            sl   = self._bids_sl
+            n    = len(sl)
+            take = min(depth, n)
+            # SortedList хранит в возрастающем порядке — берём с конца
+            return [(sl[n - 1 - i], self.bids[sl[n - 1 - i]]) for i in range(take)]
+        # fallback
+        items = sorted(self.bids.items(), key=lambda x: -x[0])
         return items[:depth]
 
     def get_asks(self, depth: int = 1000) -> List[Tuple[float, float]]:
-        """Возвращает список (price, qty) отсортированный по возрастанию цены."""
-        items = sorted(
-            ((float(p), q) for p, q in self.asks.items()),
-            key=lambda x: x[0]
-        )
+        """
+        Возвращает список (price, qty) отсортированный по возрастанию цены.
+        O(depth) при наличии SortedList, O(N log N) при fallback.
+        """
+        if _HAVE_SORTED and self._asks_sl is not None:
+            sl   = self._asks_sl
+            take = min(depth, len(sl))
+            return [(sl[i], self.asks[sl[i]]) for i in range(take)]
+        # fallback
+        items = sorted(self.asks.items(), key=lambda x: x[0])
         return items[:depth]
 
     def best_bid(self) -> Optional[float]:
+        """O(1) при наличии SortedList, O(N) при fallback."""
         if not self.bids:
             return None
-        return max(float(p) for p in self.bids)
+        if _HAVE_SORTED and self._bids_sl:
+            return self._bids_sl[-1]   # максимум — последний элемент
+        return max(self.bids.keys())
 
     def best_ask(self) -> Optional[float]:
+        """O(1) при наличии SortedList, O(N) при fallback."""
         if not self.asks:
             return None
-        return min(float(p) for p in self.asks)
+        if _HAVE_SORTED and self._asks_sl:
+            return self._asks_sl[0]    # минимум — первый элемент
+        return min(self.asks.keys())
 
 
 # ── OrderBook Manager ─────────────────────────────────────────────────────────
@@ -143,7 +202,8 @@ class OrderBookManager:
         self._running:  bool                       = False
         self._tasks:    List[asyncio.Task]         = []
         # Очередь для ресинхронизации: символы которым нужен новый снапшот
-        self._resync_q: asyncio.Queue              = asyncio.Queue()
+        # Создаём в start() чтобы попасть в правильный event loop (Python 3.8)
+        self._resync_q: asyncio.Queue              = None
 
     def get(self, symbol: str) -> Optional[OrderBook]:
         return self._books.get(symbol)
@@ -156,7 +216,8 @@ class OrderBookManager:
         return book.get_bids(depth), book.get_asks(depth)
 
     async def start(self, symbols: List[str]):
-        self._running = True
+        self._running  = True
+        self._resync_q = asyncio.Queue()  # создаём здесь — гарантированно в нужном loop
 
         # Инициализируем пустые стаканы
         for sym in symbols:
@@ -250,15 +311,19 @@ class OrderBookManager:
 
         logger.info("OrderBook: все снапшоты загружены")
 
-    def _drain_buffer(self, symbol: str, book: OrderBook):
-        """Применяет буферизированные WS события после получения снапшота."""
-        buf = book._buf
+    def _drain_buffer(self, symbol: str, book: "OrderBook"):
+        """
+        Применяет буферизированные WS события после получения снапшота.
+        Обрабатывает весь накопленный буфер за один вызов.
+        """
+        buf       = book._buf
         book._buf = []
         for event in buf:
             ok = book.apply_event(event)
             if not ok:
-                # Нужна ресинхронизация
-                self._resync_q.put_nowait(symbol)
+                # Разрыв — буфер уже очищен, ставим в очередь на resync
+                if self._resync_q is not None:
+                    self._resync_q.put_nowait(symbol)
                 return
 
     # ── WS чанк ───────────────────────────────────────────────────────────────
@@ -285,6 +350,16 @@ class OrderBookManager:
                     logger.info(f"OrderBook WS подключён: {len(symbols)} символов")
                     backoff = 1
 
+                    # При (пере)подключении сбрасываем состояние всех книг чанка.
+                    # Без этого старые события от предыдущего соединения могут
+                    # смешаться с новыми → бесконечный resync loop.
+                    for sym in symbols:
+                        book = self._books.get(sym)
+                        if book is not None:
+                            book._buf           = []
+                            book.synced         = False
+                            book.last_update_id = 0
+
                     async for raw in ws:
                         if not self._running:
                             return
@@ -301,24 +376,28 @@ class OrderBookManager:
                             if book is None:
                                 continue
 
-                            if not book.synced and book.last_update_id == 0:
-                                # Снапшот ещё не получен — буферизируем
-                                book._buf.append(event)
-                                continue
-
                             if not book.synced:
-                                # Снапшот есть — применяем из буфера
+                                # Всегда буферизируем пока не получим снапшот
+                                # (last_update_id == 0) или пока не sync-нулись.
+                                # _drain_buffer вызывается из _snapshot_loader
+                                # после apply_snapshot — не надо дренировать здесь.
                                 book._buf.append(event)
-                                self._drain_buffer(ccxt_sym, book)
+                                # Ограничиваем размер буфера: если накопилось
+                                # слишком много событий до снапшота — обрезаем
+                                # старые (они всё равно устарели).
+                                if len(book._buf) > 2000:
+                                    book._buf = book._buf[-1000:]
                                 continue
 
                             # Нормальная работа — применяем напрямую
                             ok = book.apply_event(event)
                             if not ok:
                                 logger.debug(f"OrderBook desync: {ccxt_sym}, resync...")
-                                self._resync_q.put_nowait(ccxt_sym)
-                                book.synced = False
+                                book.synced         = False
                                 book.last_update_id = 0
+                                book._buf           = []
+                                if self._resync_q is not None:
+                                    self._resync_q.put_nowait(ccxt_sym)
 
                         except Exception as e:
                             logger.debug(f"OrderBook WS parse: {e}")
@@ -336,13 +415,31 @@ class OrderBookManager:
     async def _resync_worker(self):
         """
         Обрабатывает очередь ресинхронизаций.
-        Берёт символ, ждёт 1 сек (чтобы не спамить), загружает новый снапшот.
+        Пауза 1 сек перед запросом нужна чтобы WS успел накопить свежие
+        события в буфер — они будут применены через _drain_buffer после
+        apply_snapshot.
         """
         loop = asyncio.get_event_loop()
+        # Дедупликация: не берём один символ дважды подряд
+        _in_resync: set = set()
+
         while self._running:
             try:
                 sym = await asyncio.wait_for(self._resync_q.get(), timeout=5.0)
-                await asyncio.sleep(1.0)  # небольшая пауза перед запросом
+
+                if sym in _in_resync:
+                    continue
+                _in_resync.add(sym)
+
+                book = self._books.get(sym)
+                if book:
+                    # Сброс перед паузой: WS начнёт складывать свежие события
+                    # в book._buf пока мы ждём
+                    book.synced         = False
+                    book.last_update_id = 0
+                    book._buf           = []
+
+                await asyncio.sleep(1.0)
 
                 bsym = _ccxt_to_binance(sym)
                 data = await loop.run_in_executor(None, self._fetch_snapshot, bsym)
@@ -351,7 +448,8 @@ class OrderBookManager:
                     if book:
                         book.apply_snapshot(data)
                         self._drain_buffer(sym, book)
-                        logger.debug(f"resync OK: {sym}")
+                        logger.debug(f"resync OK: {sym} id={book.last_update_id}")
+                _in_resync.discard(sym)  # снимаем блокировку только после завершения
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
