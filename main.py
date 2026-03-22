@@ -17,8 +17,10 @@ import time as _time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 
+import numpy as np
 import pandas as pd
 import requests as _requests
+from dom_orderbook import get_ob_manager, OrderBookManager
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
@@ -273,9 +275,30 @@ async def lifespan(app: FastAPI):
     #symbols = TEST_SYMBOLS
     asyncio.create_task(manager.start(symbols))
     asyncio.create_task(_symbols_refresh_loop())
-    asyncio.create_task(_dom_poll_loop())
+
+    # Запускаем order book ПОСЛЕ того как data_manager загрузит историю —
+    # чтобы не конкурировать за лимит Binance REST при старте
+    async def _delayed_ob_start():
+        # Ждём пока загрузится хотя бы 80% символов
+        while True:
+            m = get_manager()
+            total  = len(m.store.symbols)
+            loaded = len(m.store._loaded)
+            if total > 0 and loaded >= total * 0.8:
+                break
+            await asyncio.sleep(5)
+        logger.info("OrderBook: история загружена, запускаем стаканы...")
+        # Дополнительная пауза чтобы weight счётчик Binance успел сбросится
+        await asyncio.sleep(15)
+        ob_manager = get_ob_manager()
+        await ob_manager.start(symbols)
+
+    asyncio.create_task(_delayed_ob_start())
+    asyncio.create_task(_anomaly_detect_loop())
     yield
     await manager.stop()
+    ob_manager = get_ob_manager()
+    await ob_manager.stop()
 
 
 async def _symbols_refresh_loop():
@@ -626,116 +649,160 @@ async def api_oi(symbol: str, tf: str = "5m"):
 
 @app.get("/api/dom/{symbol:path}")
 async def api_dom(symbol: str, depth: int = 50):
-    import requests
-    try:
-        base        = symbol.split("/")[0]
-        quote       = symbol.split("/")[1].split(":")[0]
-        binance_sym = base + quote
-        depth       = max(5, depth)
-        for snap in (5, 10, 20, 50, 100, 500, 1000):
-            if snap >= depth:
-                snap_limit = snap
-                break
-        else:
-            snap_limit = 1000
-        r = requests.get(
-            "https://fapi.binance.com/fapi/v1/depth",
-            params={"symbol": binance_sym, "limit": snap_limit},
-            timeout=5,
-        )
-        r.raise_for_status()
-        raw  = r.json()
-        bids = [[float(p), float(q)] for p, q in raw.get("bids", [])][:depth]
-        asks = [[float(p), float(q)] for p, q in raw.get("asks", [])][:depth]
-        max_qty = max(
-            max((q for _, q in bids), default=0),
-            max((q for _, q in asks), default=0),
-            1e-12,
-        )
-        return {
-            "bids":    [{"price": p, "qty": q, "pct": q / max_qty} for p, q in bids],
-            "asks":    [{"price": p, "qty": q, "pct": q / max_qty} for p, q in asks],
-            "max_qty": max_qty,
-        }
-    except Exception as e:
-        raise HTTPException(500, f"DOM error: {e}")
+    """Возвращает стакан из локального order book (без REST запросов к Binance)."""
+    ob = get_ob_manager().get(symbol)
+    if ob is None or not ob.synced:
+        raise HTTPException(503, "Order book not ready yet")
+    depth = max(5, min(depth, 1000))
+    bids  = ob.get_bids(depth)
+    asks  = ob.get_asks(depth)
+    max_qty = max(
+        max((q for _, q in bids), default=0),
+        max((q for _, q in asks), default=0),
+        1e-12,
+    )
+    return {
+        "bids":    [{"price": p, "qty": q, "pct": q / max_qty} for p, q in bids],
+        "asks":    [{"price": p, "qty": q, "pct": q / max_qty} for p, q in asks],
+        "max_qty": max_qty,
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# DOM Anomaly Detector
+# DOM Anomaly Detector  —  локальный order book через diff stream
 # ──────────────────────────────────────────────────────────────────────────────
 
-_DOM_SNAPSHOTS:  dict = collections.defaultdict(lambda: collections.deque(maxlen=6))
-_DOM_ANOMALIES:  dict = {}
-_DOM_FIRST_SEEN: dict = collections.defaultdict(dict)
-_DOM_POLL_INTERVAL = 60
-_DOM_DEPTH         = 100
-_DOM_MIN_PERSIST   = 60
-_DOM_ANOMALY_MULT  = 8.0
-_DOM_MIN_USD       = 0.0
+_DOM_ANOMALIES:   dict  = {}
+_DOM_FIRST_SEEN:  dict  = collections.defaultdict(dict)
+_DOM_LAST_DETECT: dict  = {}          # symbol → время последнего детекта
+
+_DOM_DEPTH        = 1000              # уровней для детектора (из локального book)
+_DOM_MIN_PERSIST  = 60                # сек — стена должна простоять
+_DOM_ANOMALY_MULT = 50.0               # score порог
+_DOM_MIN_USD      = 10000.0               # мин. размер стены в USD
+_DETECT_INTERVAL  = 10                # сек между запусками детектора на символ
+
+_ATR_PERIOD       = 100               # баров 5m для ATR
+_ATR_MULT         = 5.0               # диапазон = цена ± ATR * mult
+
+# История уровней для проверки персистентности: symbol → {side_price → deque[ts]}
+_LEVEL_HISTORY: dict = collections.defaultdict(lambda: collections.defaultdict(
+    lambda: collections.deque(maxlen=20)
+))
 
 
-def _fetch_dom_sync(binance_sym: str) -> dict:
+def _calc_atr(df_1m, period: int = _ATR_PERIOD) -> float:
+    """ATR(period) по 5m барам из 1m mini_store."""
     try:
-        r = _requests.get(
-            "https://fapi.binance.com/fapi/v1/depth",
-            params={"symbol": binance_sym, "limit": _DOM_DEPTH},
-            timeout=5,
-        )
-        r.raise_for_status()
-        raw  = r.json()
-        bids = [(float(p), float(q)) for p, q in raw.get("bids", [])]
-        asks = [(float(p), float(q)) for p, q in raw.get("asks", [])]
-        return {"bids": bids, "asks": asks}
+        df5 = df_1m.resample("5min", label="left", closed="left").agg({
+            "high":  "max",
+            "low":   "min",
+            "close": "last",
+        }).dropna()
+        if len(df5) < period + 1:
+            return 0.0
+        df5 = df5.iloc[-(period + 1):]
+        h, l, c = df5["high"].values, df5["low"].values, df5["close"].values
+        hl  = h[1:] - l[1:]
+        hcp = abs(h[1:] - c[:-1])
+        lcp = abs(l[1:] - c[:-1])
+        tr  = np.maximum(hl, np.maximum(hcp, lcp))
+        return float(tr[-period:].mean())
     except Exception:
-        return {}
+        return 0.0
 
 
-def _detect_anomalies(symbol: str, current_price: float) -> list:
-    snaps = list(_DOM_SNAPSHOTS[symbol])
-    if len(snaps) < 2:
+def _detect_anomalies(symbol: str, current_price: float, df_1m=None) -> list:
+    """
+    Детектор аномальных стен в стакане.
+    Медиана считается по ATR-зоне (цена ± ATR*5 по 5m барам).
+    Проверяется весь стакан на глубину _DOM_DEPTH.
+    Персистентность: уровень должен присутствовать >= _DOM_MIN_PERSIST сек.
+    """
+    if current_price <= 0:
         return []
-    now        = _time.time()
-    latest     = snaps[-1]
-    all_levels = latest.get("bids", []) + latest.get("asks", [])
-    if not all_levels or len(all_levels) < 5:
+
+    ob = get_ob_manager().get(symbol)
+    if ob is None or not ob.synced:
         return []
-    all_qtys   = [q for _, q in all_levels]
-    median_qty = statistics.median(all_qtys)
+
+    bids = ob.get_bids(_DOM_DEPTH)   # [(price, qty), ...] сортировка ↓
+    asks = ob.get_asks(_DOM_DEPTH)   # [(price, qty), ...] сортировка ↑
+
+    if not bids and not asks:
+        return []
+
+    now = _time.time()
+
+    # ── Обновляем историю уровней для проверки персистентности ───────────────
+    hist = _LEVEL_HISTORY[symbol]
+    seen_keys = set()
+    for price, qty in bids:
+        k = f"bid_{round(price, 8)}"
+        hist[k].append(now)
+        seen_keys.add(k)
+    for price, qty in asks:
+        k = f"ask_{round(price, 8)}"
+        hist[k].append(now)
+        seen_keys.add(k)
+    # Чистим исчезнувшие уровни
+    gone = [k for k in hist if k not in seen_keys]
+    for k in gone:
+        del hist[k]
+
+    # ── ATR-диапазон для медианы ──────────────────────────────────────────────
+    atr = _calc_atr(df_1m) if df_1m is not None else 0.0
+    all_levels = bids + asks
+
+    if atr > 0:
+        lo = current_price - atr * _ATR_MULT
+        hi = current_price + atr * _ATR_MULT
+        near = [(p, q) for p, q in all_levels if lo <= p <= hi]
+    else:
+        near = sorted(all_levels, key=lambda x: abs(x[0] - current_price))
+        near = near[:max(5, len(near) // 2)]
+
+    if len(near) < 3:
+        near = all_levels
+
+    # Робастная медиана: нижние 90% по qty
+    zone_qtys = sorted(q for _, q in near)
+    cutoff    = max(1, int(len(zone_qtys) * 0.90))
+    median_qty = statistics.median(zone_qtys[:cutoff])
     if median_qty <= 0:
         return []
-    old_snaps = [s for s in snaps if now - s["ts"] >= _DOM_MIN_PERSIST]
-    if not old_snaps:
-        return []
 
-    def snap_prices(snap, side):
-        return {round(p, 8) for p, q in snap.get(side, [])}
-
-    persistent_bids = set.intersection(*[snap_prices(s, "bids") for s in old_snaps])
-    persistent_asks = set.intersection(*[snap_prices(s, "asks") for s in old_snaps])
+    # ── Поиск аномалий ────────────────────────────────────────────────────────
     fs       = _DOM_FIRST_SEEN[symbol]
     seen_now = set()
     anomalies = []
 
-    for side, levels, persistent in [
-        ("bid", latest.get("bids", []), persistent_bids),
-        ("ask", latest.get("asks", []), persistent_asks),
-    ]:
+    for side, levels in [("bid", bids), ("ask", asks)]:
         for price, qty in levels:
             rounded = round(price, 8)
-            if rounded not in persistent:
+            key     = f"{side}_{rounded}"
+            hist_k  = hist.get(key)
+
+            # Персистентность: уровень должен быть в истории >= _DOM_MIN_PERSIST сек
+            if not hist_k or len(hist_k) < 2:
                 continue
+            age_in_book = now - hist_k[0]
+            if age_in_book < _DOM_MIN_PERSIST:
+                continue
+
             score = qty / median_qty
-            if score < _DOM_ANOMALY_MULT or current_price <= 0:
+            if score < _DOM_ANOMALY_MULT:
                 continue
-            if _DOM_MIN_USD > 0 and qty * price < _DOM_MIN_USD:
+
+            usd_val = qty * price
+            if _DOM_MIN_USD > 0 and usd_val < _DOM_MIN_USD:
                 continue
-            key = f"{side}_{rounded}"
+
             seen_now.add(key)
             if key not in fs:
                 fs[key] = now
+
             distance_pct = abs(price - current_price) / current_price * 100
-            usd_val      = qty * price
             anomalies.append({
                 "price":        rounded,
                 "qty":          round(qty, 4),
@@ -747,6 +814,7 @@ def _detect_anomalies(symbol: str, current_price: float) -> list:
                 "age_sec":      int(now - fs[key]),
             })
 
+    # Чистим first_seen для исчезнувших уровней
     stale = [k for k in fs if k not in seen_now and now - fs[k] > 28800]
     for k in stale:
         del fs[k]
@@ -755,47 +823,75 @@ def _detect_anomalies(symbol: str, current_price: float) -> list:
     return anomalies[:5]
 
 
-async def _dom_poll_loop():
-    await asyncio.sleep(15)
+import re as _re
+
+# Символы-стейблы и прочий мусор которые не нужны в Big Bid/Ask
+_EXCLUDE_BASES = {
+    # Стейблы
+    "USDC", "USDE", "USDP", "TUSD", "BUSD", "FDUSD", "PYUSD", "USDD",
+    "EURC", "EURI", "EURS", "USDT", "DAI", "FRAX", "LUSD", "GUSD",
+    "SUSD", "CUSD", "CEUR", "HUSD", "USDX", "USDK", "USDJ",
+    # Прочие исключения
+    "BTCDOM", "DEFI",
+}
+# Паттерны для исключения (квартальные фьючи: содержат 6-значную дату типа 260626)
+_EXCLUDE_PATTERN = _re.compile(r"-\d{6}$|_\d{6}$|\d{6}$")
+
+# Китайский мем-токен
+_EXCLUDE_NAMES = {"我踏马来了", "WTMLL"}
+
+
+def _should_skip_anomaly(symbol: str) -> bool:
+    """Возвращает True если символ не нужно проверять на аномалии стакана."""
+    base = symbol.split("/")[0].upper()
+    # Стейблы и спецсимволы
+    if base in _EXCLUDE_BASES:
+        return True
+    # Квартальные фьючи с датой в тикере (BTC/USDT:USDT-260626, ETH-260327 и т.п.)
+    # Дата может быть как в base так и в суффиксе после :
+    if _EXCLUDE_PATTERN.search(symbol):
+        return True
+    # Китайские/Unicode тикеры — содержат не-ASCII символы
+    if not base.isascii():
+        return True
+    # Явные имена
+    if base in _EXCLUDE_NAMES:
+        return True
+    return False
+
+
+async def _anomaly_detect_loop():
+    """
+    Периодически запускает детектор аномалий для всех символов.
+    Не чаще _DETECT_INTERVAL сек на символ.
+    """
+    await asyncio.sleep(30)  # ждём пока стаканы синхронизируются
     while True:
         try:
-            m       = get_manager()
-            symbols = [s for s in m.store.symbols if s in m.store._loaded]
-            if not symbols:
-                await asyncio.sleep(_DOM_POLL_INTERVAL)
-                continue
+            m   = get_manager()
+            obm = get_ob_manager()
+            now = _time.time()
 
-            loop = asyncio.get_event_loop()
-            now  = _time.time()
+            for sym in m.store.symbols:
+                if _should_skip_anomaly(sym):
+                    continue
+                if now - _DOM_LAST_DETECT.get(sym, 0) < _DETECT_INTERVAL:
+                    continue
+                ob = obm.get(sym)
+                if ob is None or not ob.synced:
+                    continue
+                _DOM_LAST_DETECT[sym] = now
+                df        = m.store.get_mini(sym)
+                cur_price = float(df.iloc[-1]["close"]) if df is not None and not df.empty else 0
+                _DOM_ANOMALIES[sym] = _detect_anomalies(sym, cur_price, df_1m=df)
 
-            for sym in symbols:
-                try:
-                    base  = sym.split("/")[0]
-                    quote = sym.split("/")[1].split(":")[0]
-                    bsym  = base + quote
+            await asyncio.sleep(2)   # проверяем каждые 2 сек
 
-                    dom = await loop.run_in_executor(None, _fetch_dom_sync, bsym)
-                    if not dom:
-                        continue
-
-                    dom["ts"] = now
-                    _DOM_SNAPSHOTS[sym].append(dom)
-
-                    df        = m.store.get_mini(sym)
-                    cur_price = float(df.iloc[-1]["close"]) if df is not None and not df.empty else 0
-                    _DOM_ANOMALIES[sym] = _detect_anomalies(sym, cur_price)
-
-                    await asyncio.sleep(0.06)
-                except Exception as e:
-                    logger.debug(f"dom_poll {sym}: {e}")
-
-            logger.debug(f"dom_poll: обработано {len(symbols)} символов")
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning(f"dom_poll_loop: {e}")
-
-        await asyncio.sleep(_DOM_POLL_INTERVAL)
+            logger.warning(f"anomaly_detect_loop: {e}")
+            await asyncio.sleep(5)
 
 
 @app.post("/api/set_limit_mult")
@@ -807,11 +903,9 @@ async def api_set_limit_mult(mult: float = 8.0):
 
 
 @app.post("/api/set_limit_params")
-async def api_set_limit_params(mult: float = 8.0, depth: int = 100, min_usd: float = 0.0):
-    global _DOM_ANOMALY_MULT, _DOM_DEPTH, _DOM_MIN_USD
+async def api_set_limit_params(mult: float = 8.0):
+    global _DOM_ANOMALY_MULT
     _DOM_ANOMALY_MULT = max(2.0, min(100.0, mult))
-    _DOM_DEPTH        = max(5, min(1000, depth))
-    _DOM_MIN_USD      = max(0.0, min_usd)
     _DOM_ANOMALIES.clear()
     return {"mult": _DOM_ANOMALY_MULT, "depth": _DOM_DEPTH, "min_usd": _DOM_MIN_USD}
 
@@ -823,12 +917,15 @@ async def api_limit_levels(symbol: str):
 
 @app.get("/api/dom_debug/{symbol:path}")
 async def api_dom_debug(symbol: str):
-    snaps = list(_DOM_SNAPSHOTS.get(symbol, []))
-    now   = _time.time()
+    ob  = get_ob_manager().get(symbol)
+    now = _time.time()
     return {
-        "snapshots_count": len(snaps),
-        "snap_ages_sec":   [round(now - s["ts"]) for s in snaps],
-        "oldest_snap_sec": round(now - snaps[0]["ts"]) if snaps else None,
+        "synced":          ob.synced if ob else False,
+        "last_update_id":  ob.last_update_id if ob else None,
+        "bids_count":      len(ob.bids) if ob else 0,
+        "asks_count":      len(ob.asks) if ob else 0,
+        "best_bid":        ob.best_bid() if ob else None,
+        "best_ask":        ob.best_ask() if ob else None,
         "anomalies":       _DOM_ANOMALIES.get(symbol, []),
         "first_seen_keys": list(_DOM_FIRST_SEEN.get(symbol, {}).keys()),
     }
