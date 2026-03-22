@@ -26,13 +26,13 @@ ALL_TFS     = ["1m", "5m", "15m", "1h"]
 CACHE_DIR   = "cache"
 
 # Сколько баров держим в mini_store (для скринера vol/spike)
-MINI_BARS = 2000          # 1500 × 1m = 25 часов — достаточно для vol24h
+MINI_BARS = 1500          # 1500 × 1m = 25 часов — достаточно для vol24h
 
 # Полная история для графика
-CHART_LIMIT = 50400        # баров 1m в chart_store
+CHART_LIMIT = 50400      # баров 1m в chart_store
 
 # Через сколько секунд неактивности выгружать символ из chart_store
-CHART_EVICT_SEC = 60     # 1 минут
+CHART_EVICT_SEC = 1200     # 10 минут
 
 # Неделя в секундах — старше этого обрезаем из кэша
 CACHE_WEEK_SEC  = 35 * 24 * 3600
@@ -268,14 +268,39 @@ class DataManager:
     def __init__(self):
         self.store    = DataStore()
         self._running = False
-        self._ws_task:  Optional[asyncio.Task] = None
-        self._oi_task:  Optional[asyncio.Task] = None
-        self._evict_task: Optional[asyncio.Task] = None
+        self._ws_task:    Optional[asyncio.Task]       = None
+        self._oi_task:    Optional[asyncio.Task]       = None
+        self._evict_task: Optional[asyncio.Task]       = None
+        # #1: per-symbol lock — защита от одновременного _load_chart
+        # при параллельных запросах /api/bars, /api/absorption, /api/poc
+        self._chart_locks: Dict[str, asyncio.Lock]    = defaultdict(asyncio.Lock)
+
+    # #6: пул переиспользуемых ccxt-экземпляров (размер = MAX_WORKERS)
+    # вместо создания нового объекта при каждом вызове _load_mini / _load_chart
+    _POOL_SIZE = MAX_WORKERS
+
+    def _get_pool_ex(self):
+        """
+        Возвращает ccxt-экземпляр из пула (round-robin по индексу потока).
+        Пул создаётся лениво при первом обращении.
+        """
+        if not hasattr(self, "_ex_pool"):
+            self._ex_pool = [
+                (ccxt.binanceusdm if MARKET_TYPE == "future" else ccxt.binance)(
+                    {"enableRateLimit": True}
+                )
+                for _ in range(self._POOL_SIZE)
+            ]
+            self._ex_pool_idx = 0
+        # round-robin — не thread-safe, но для наших задач достаточно:
+        # максимальное число одновременных потоков = MAX_WORKERS
+        idx = self._ex_pool_idx % self._POOL_SIZE
+        self._ex_pool_idx = idx + 1
+        return self._ex_pool[idx]
 
     def _make_sync_ex(self):
-        return (ccxt.binanceusdm if MARKET_TYPE == "future" else ccxt.binance)(
-            {"enableRateLimit": True}
-        )
+        """Обратная совместимость — теперь возвращает экземпляр из пула."""
+        return self._get_pool_ex()
 
     def _make_ws_ex(self):
         return (ccxtpro.binanceusdm if MARKET_TYPE == "future" else ccxtpro.binance)(
@@ -547,8 +572,17 @@ class DataManager:
         logger.info("Мини-история загружена ✓")
 
     async def ensure_tf(self, symbol: str, tf: str):
-        """Called before serving /api/bars — ensures full chart history is loaded."""
-        if not self.store.has_chart(symbol):
+        """
+        Called before serving /api/bars — ensures full chart history is loaded.
+        #1: double-checked locking — при параллельных запросах одного символа
+        _load_chart вызывается ровно один раз; остальные ждут и уходят сразу.
+        """
+        if self.store.has_chart(symbol):
+            return
+        async with self._chart_locks[symbol]:
+            # Повторная проверка внутри лока: пока мы ждали, другой уже загрузил
+            if self.store.has_chart(symbol):
+                return
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._load_chart, symbol)
 
@@ -592,12 +626,18 @@ class DataManager:
 
                     if time.time() - last_cache_save >= CACHE_INTERVAL:
                         last_cache_save = time.time()
-                        loop = asyncio.get_event_loop()
+                        # #3: батч — все записи параллельно через gather
+                        # вместо 50 последовательных run_in_executor
+                        loop  = asyncio.get_event_loop()
+                        tasks = []
                         for sym in symbols:
-                            # Save chart data if loaded, else mini
                             df = self.store.get_chart(sym) or self.store.get_mini(sym)
                             if df is not None:
-                                await loop.run_in_executor(None, cache_save, sym, "1m", df)
+                                tasks.append(
+                                    loop.run_in_executor(None, cache_save, sym, "1m", df)
+                                )
+                        if tasks:
+                            await asyncio.gather(*tasks, return_exceptions=True)
 
                 except asyncio.CancelledError:
                     raise
