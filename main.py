@@ -680,6 +680,32 @@ _DOM_MIN_PERSIST   = 60
 _DOM_ANOMALY_MULT  = 8.0
 _DOM_MIN_USD       = 50000.0
 
+_ATR_PERIOD = 100
+_ATR_MULT   = 5.0
+
+
+def _calc_atr(df_1m: pd.DataFrame, period: int = _ATR_PERIOD) -> float:
+    """ATR(period) по 5m барам, ресемплированным из 1m."""
+    try:
+        df5 = df_1m.resample("5min", label="left", closed="left").agg({
+            "high":  "max",
+            "low":   "min",
+            "close": "last",
+        }).dropna()
+        if len(df5) < 2:
+            return 0.0
+        df5 = df5.iloc[-(period + 1):]
+        h = df5["high"].values
+        l = df5["low"].values
+        c = df5["close"].values
+        hl  = h[1:] - l[1:]
+        hcp = np.abs(h[1:] - c[:-1])
+        lcp = np.abs(l[1:] - c[:-1])
+        tr  = np.maximum(hl, np.maximum(hcp, lcp))
+        return float(tr[-period:].mean())
+    except Exception:
+        return 0.0
+
 
 def _fetch_dom_sync(binance_sym: str) -> dict:
     try:
@@ -697,7 +723,7 @@ def _fetch_dom_sync(binance_sym: str) -> dict:
         return {}
 
 
-def _detect_anomalies(symbol: str, current_price: float) -> list:
+def _detect_anomalies(symbol: str, current_price: float, df_1m=None) -> list:
     snaps = list(_DOM_SNAPSHOTS[symbol])
     if len(snaps) < 2:
         return []
@@ -706,8 +732,24 @@ def _detect_anomalies(symbol: str, current_price: float) -> list:
     all_levels = latest.get("bids", []) + latest.get("asks", [])
     if not all_levels or len(all_levels) < 5:
         return []
-    all_qtys   = [q for _, q in all_levels]
-    median_qty = statistics.median(all_qtys)
+
+    # ── ATR-фильтрация: берём только уровни внутри [price ± ATR(100)*5] по 5m ──
+    atr = _calc_atr(df_1m) if df_1m is not None else 0.0
+    if atr > 0:
+        lo   = current_price - atr * _ATR_MULT
+        hi   = current_price + atr * _ATR_MULT
+        near = [(p, q) for p, q in all_levels if lo <= p <= hi]
+    else:
+        # fallback: ближайшие 50% уровней по дистанции от цены
+        near = sorted(all_levels, key=lambda x: abs(x[0] - current_price))
+        near = near[:max(5, len(near) // 2)]
+    if len(near) < 3:
+        near = all_levels  # второй fallback: весь стакан
+
+    # ── Робастная медиана: нижние 90% по qty ─────────────────────────────────
+    zone_qtys  = sorted(q for _, q in near)
+    cutoff     = max(1, int(len(zone_qtys) * 0.90))
+    median_qty = statistics.median(zone_qtys[:cutoff])
     if median_qty <= 0:
         return []
     old_snaps = [s for s in snaps if now - s["ts"] >= _DOM_MIN_PERSIST]
@@ -789,7 +831,7 @@ async def _dom_poll_loop():
 
                     df        = m.store.get_mini(sym)
                     cur_price = float(df.iloc[-1]["close"]) if df is not None and not df.empty else 0
-                    _DOM_ANOMALIES[sym] = _detect_anomalies(sym, cur_price)
+                    _DOM_ANOMALIES[sym] = _detect_anomalies(sym, cur_price, df_1m=df)
 
                     await asyncio.sleep(0.06)
                 except Exception as e:
@@ -823,7 +865,7 @@ async def api_set_limit_params(mult: float = 8.0):
             df        = m.store.get_mini(sym)
             cur_price = float(df.iloc[-1]["close"]) if df is not None and not df.empty else 0
             if cur_price > 0:
-                _DOM_ANOMALIES[sym] = _detect_anomalies(sym, cur_price)
+                _DOM_ANOMALIES[sym] = _detect_anomalies(sym, cur_price, df_1m=df)
         except Exception:
             pass
 
