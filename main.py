@@ -64,9 +64,32 @@ _SYMBOLS_TTL = 10.0
 
 # ─── Кэш результатов absorption и poc ───────────────────────────────────────
 # Ключ: (symbol, tf, mode, percentile, manual_vol, lookback) → (result, timestamp)
-# TTL 30 сек — данные меняются только при появлении новых баров
+# TTL 60 сек — данные меняются только при появлении новых баров
 _result_cache: dict = {}
-_RESULT_TTL = 30.0
+_RESULT_TTL = 60.0
+
+# ─── Кэш ресемплированных датафреймов ────────────────────────────────────────
+# Ключ: (symbol, tf) → (df, monotonic_ts)
+# TTL 10 сек — исключает тройной resample за одно открытие символа
+_resample_cache: dict = {}
+_RESAMPLE_TTL = 10.0
+
+
+def resample_cached(df_1m: pd.DataFrame, symbol: str, tf: str) -> pd.DataFrame:
+    """Возвращает ресемплированный df из кэша или пересчитывает."""
+    key   = (symbol, tf)
+    entry = _resample_cache.get(key)
+    if entry is not None and _time.monotonic() - entry[1] < _RESAMPLE_TTL:
+        return entry[0]
+    df = resample_from_1m(df_1m, tf)
+    _resample_cache[key] = (df, _time.monotonic())
+    # Чистим устаревшие записи
+    if len(_resample_cache) > 200:
+        now = _time.monotonic()
+        stale = [k for k, (_, ts) in _resample_cache.items() if now - ts > _RESAMPLE_TTL]
+        for k in stale:
+            del _resample_cache[k]
+    return df
 
 def _cache_get(key: tuple):
     entry = _result_cache.get(key)
@@ -470,7 +493,7 @@ async def api_bars(symbol: str, tf: str = "5m"):
         df = df_1m
     else:
         loop = asyncio.get_event_loop()
-        df   = await loop.run_in_executor(None, resample_from_1m, df_1m, tf)
+        df   = await loop.run_in_executor(None, resample_cached, df_1m, symbol, tf)
 
     limit      = MAX_DISPLAY.get(tf, MAX_DISPLAY_DEFAULT)
     display_df = df.iloc[-limit:] if len(df) > limit else df
@@ -504,46 +527,40 @@ async def api_absorption(
 ):
     import numpy as np
 
-    cache_key = ("absorption", symbol, tf, mode, percentile, manual_vol, lookback)
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return cached
-
     m = get_manager()
     await m.ensure_tf(symbol, "1m")
     df_1m = m.store.get(symbol, "1m")
     if df_1m is None or df_1m.empty:
         raise HTTPException(404, f"Нет данных {symbol}")
 
+    # #7: ключ кэша включает last_ts — инвалидируется при появлении нового бара
+    last_ts   = int(df_1m.index[-1].timestamp())
+    cache_key = ("absorption", symbol, tf, mode, percentile, manual_vol, lookback, last_ts)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     loop = asyncio.get_event_loop()
     if tf == "1m":
         base_df = df_1m
     else:
-        base_df = await loop.run_in_executor(None, resample_from_1m, df_1m, tf)
+        base_df = await loop.run_in_executor(None, resample_cached, df_1m, symbol, tf)
 
     ltf_df = df_1m
 
-    result = calc_absorption(
-        base_df, ltf_df,
-        base_tf=tf,
-        mode=mode,
-        manual_vol=manual_vol,
-        percentile=percentile,
-        lookback=lookback,
+    result, auto_thresh = await loop.run_in_executor(
+        None,
+        lambda: calc_absorption(
+            base_df, ltf_df,
+            base_tf=tf,
+            mode=mode,
+            manual_vol=manual_vol,
+            percentile=percentile,
+            lookback=lookback,
+        ),
     )
-
-    auto_thresh = None
-    if mode == "Auto":
-        vol_series    = ltf_df["volume"] if tf != "1m" else base_df["volume"]
-        thresh_series = (
-            vol_series.shift(1)
-            .rolling(window=lookback, min_periods=10)
-            .quantile(percentile / 100)
-        )
-        if not thresh_series.empty:
-            last_val = thresh_series.dropna()
-            if not last_val.empty:
-                auto_thresh = float(last_val.iloc[-1])
+    # #2: auto_thresh уже вычислен внутри calc_absorption —
+    # убран повторный rolling().quantile() который считался здесь второй раз
 
     response = {
         "signals":     absorption_to_json(result),
@@ -562,25 +579,27 @@ async def api_poc(
     poc1w:  bool = True,
     poc1m:  bool = False,
 ):
-    cache_key = ("poc", symbol, tf, poc4h, poc1d, poc1w, poc1m)
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return cached
-
     m = get_manager()
     await m.ensure_tf(symbol, "1m")
     df_1m = m.store.get(symbol, "1m")
     if df_1m is None or df_1m.empty:
         raise HTTPException(404, f"Нет данных {symbol}")
 
+    # #7: ключ кэша включает last_ts — инвалидируется при появлении нового бара
+    last_ts   = int(df_1m.index[-1].timestamp())
+    cache_key = ("poc", symbol, tf, poc4h, poc1d, poc1w, poc1m, last_ts)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     loop = asyncio.get_event_loop()
     if tf == "1m":
         df = df_1m
     else:
-        df = await loop.run_in_executor(None, resample_from_1m, df_1m, tf)
+        df = await loop.run_in_executor(None, resample_cached, df_1m, symbol, tf)
 
     show   = {"4H": poc4h, "1D": poc1d, "1W": poc1w, "1M": poc1m}
-    pocs   = calc_all_pocs(df, tf, show)
+    pocs   = await loop.run_in_executor(None, calc_all_pocs, df, tf, show)
     result = pocs_to_json(pocs, max_display=MAX_DISPLAY.get(tf, MAX_DISPLAY_DEFAULT))
     _cache_set(cache_key, result)
     return result
@@ -634,6 +653,7 @@ async def api_reload(symbol: str):
 
 
 
+@app.get("/api/oi/{symbol:path}")
 async def api_oi(symbol: str, tf: str = "5m"):
     m = get_manager()
     await m.ensure_oi(symbol, tf)
@@ -651,8 +671,15 @@ async def api_oi(symbol: str, tf: str = "5m"):
 async def api_dom(symbol: str, depth: int = 50):
     """Возвращает стакан из локального order book (без REST запросов к Binance)."""
     ob = get_ob_manager().get(symbol)
-    if ob is None or not ob.synced:
-        raise HTTPException(503, "Order book not ready yet")
+    if ob is None:
+        raise HTTPException(503, detail={"reason": "no_book", "msg": f"Order book not initialized for {symbol}"})
+    if not ob.synced:
+        raise HTTPException(503, detail={
+            "reason":          "not_synced",
+            "msg":             "Order book syncing, please retry in a few seconds",
+            "last_update_id":  ob.last_update_id,
+            "buf_size":        len(ob._buf),
+        })
     depth = max(5, min(depth, 1000))
     bids  = ob.get_bids(depth)
     asks  = ob.get_asks(depth)
@@ -677,9 +704,9 @@ _DOM_FIRST_SEEN:  dict  = collections.defaultdict(dict)
 _DOM_LAST_DETECT: dict  = {}          # symbol → время последнего детекта
 
 _DOM_DEPTH        = 1000              # уровней для детектора (из локального book)
-_DOM_MIN_PERSIST  = 60                # сек — стена должна простоять
+_DOM_MIN_PERSIST  = 120                # сек — стена должна простоять
 _DOM_ANOMALY_MULT = 50.0               # score порог
-_DOM_MIN_USD      = 10000.0               # мин. размер стены в USD
+_DOM_MIN_USD      = 50000.0               # мин. размер стены в USD
 _DETECT_INTERVAL  = 10                # сек между запусками детектора на символ
 
 _ATR_PERIOD       = 100               # баров 5m для ATR
