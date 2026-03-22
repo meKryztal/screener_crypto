@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # ── Константы ─────────────────────────────────────────────────────────────────
 _WS_BASE          = "wss://fstream.binance.com/stream"
 _REST_URL         = "https://fapi.binance.com/fapi/v1/depth"
-_SNAPSHOT_DEPTH   = 500      # уровней в REST снапшоте
+_SNAPSHOT_DEPTH   = 1000      # уровней в REST снапшоте
 _WS_CHUNK_SIZE    = 200       # символов на одно WS соединение
 _SNAP_CONCURRENCY = 2         # параллельных REST запросов снапшота
 _SNAP_INTERVAL    = 0.60      # сек между запросами внутри одного слота (1.6/сек × 2 слота ≈ 3/сек, weight≈30/сек << лимит 2400/мин)
