@@ -115,7 +115,7 @@ def calc_dom_median(
     """
     Filter DOM levels within [lo, hi] ATR range,
     compute robust qty-based median (bottom 90% of levels by qty).
-
+    
     Подход из 11111.py (детектор аномалий):
     - Медиана считается по qty (не по USD) — устойчива к крупным стенам.
     - Обрезаются топ 10% уровней по qty перед расчётом медианы — аномалии
@@ -170,14 +170,14 @@ def calc_dom_median(
     for price, qty, side in all_levels:
         usd_val = qty * price
         score   = qty / median_qty if median_qty > 0 else 0.0
-
+        
         level_dict = {
             "price": round(price, 10),
             "qty":   round(qty, 6),
             "usd":   round(usd_val, 2),
             "score": round(score, 4),
         }
-
+        
         if side == "bid":
             bids_with_score.append(level_dict)
             bid_total_usd += usd_val
