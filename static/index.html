@@ -1,0 +1,3257 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Screener</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+/* ── DARK THEME (default) ── */
+[data-theme="dark"] {
+  --bg0:#0b0e11;--bg1:#131722;--bg2:#1c2030;--bg3:#252d3d;
+  --border:#2a3350;--t0:#e8ecf5;--t1:#a0aec0;--t2:#5c6b8a;
+  --green:#0ecb81;--red:#f6465d;--yellow:#f0b90b;--blue:#1890ff;
+  --chart-bg:#0b0e11;--chart-grid:#131722;--chart-text:#5c6b8a;
+  --chart-border:#1c2030;--draw-bg:#1c2030;
+}
+/* ── LIGHT THEME ── */
+[data-theme="light"] {
+  --bg0:#eef0f5;--bg1:#ffffff;--bg2:#e4e7ef;--bg3:#d0d4e0;
+  --border:#b8bdd0;--t0:#0d1017;--t1:#1e2535;--t2:#4a5270;
+  --green:#0a8f5c;--red:#d63050;--yellow:#b37800;--blue:#1264cc;
+  --chart-bg:#ffffff;--chart-grid:#eef0f5;--chart-text:#4a5270;
+  --chart-border:#d0d4e0;--draw-bg:#e4e7ef;
+}
+
+:root{--side:270px;--top:40px;--bar:36px;}
+*{box-sizing:border-box;margin:0;padding:0}
+html{height:100%;height:100dvh}
+body{height:100%;height:100dvh;overflow:hidden;background:var(--bg0);color:var(--t0);
+  font-family:'SF Mono','Cascadia Code','Fira Code',monospace;font-size:12px;
+  display:flex;flex-direction:column;transition:background .2s,color .2s;
+  padding-left:env(safe-area-inset-left);
+  padding-right:env(safe-area-inset-right);
+  padding-top:env(safe-area-inset-top);
+  padding-bottom:env(safe-area-inset-bottom)}
+
+.top{height:var(--top);background:var(--bg1);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;flex-shrink:0}
+.top-logo{width:var(--side);padding:0 12px;display:flex;align-items:center;gap:7px;
+  border-right:1px solid var(--border);height:100%;flex-shrink:0}
+.logo-box{width:20px;height:20px;border-radius:4px;
+  background:linear-gradient(135deg,var(--green),var(--blue));
+  display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff}
+.logo-txt{font-size:13px;font-weight:700}
+.logo-sub{font-size:9px;color:var(--t2);letter-spacing:1px;margin-left:2px}
+.top-info{display:flex;align-items:center;gap:10px;padding:0 14px;flex:1}
+.sym-big{font-size:14px;font-weight:700}
+.copy-btn{background:transparent;border:none;cursor:pointer;color:var(--t2);
+  padding:2px 4px;border-radius:3px;font-size:11px;line-height:1;transition:all .15s;flex-shrink:0}
+.copy-btn:hover{background:var(--bg3);color:var(--t0)}
+.copy-btn.copied{color:var(--green)}
+.price-big{font-size:14px;font-weight:600;transition:color .15s}
+.price-big.pos{color:var(--green)}.price-big.neg{color:var(--red)}
+.chg-badge{font-size:11px;padding:2px 6px;border-radius:4px}
+.chg-badge.pos{background:color-mix(in srgb,var(--green) 18%,transparent);color:var(--green)}
+.chg-badge.neg{background:color-mix(in srgb,var(--red) 18%,transparent);color:var(--red)}
+.ohlc{display:flex;gap:10px;color:var(--t2);font-size:11px;margin-left:6px}
+.ohlc span{color:var(--t1)}
+
+/* Theme toggle */
+.theme-btn{margin-left:auto;margin-right:10px;background:transparent;
+  border:1px solid var(--border);border-radius:4px;color:var(--t1);
+  font-family:inherit;font-size:11px;padding:3px 8px;cursor:pointer;
+  transition:all .15s;display:flex;align-items:center;gap:5px}
+.theme-btn:hover{background:var(--bg3);color:var(--t0)}
+.utc-btn{background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--t2);
+  font-family:inherit;font-size:11px;padding:3px 8px;cursor:pointer;margin-right:6px;
+  transition:all .15s;letter-spacing:.3px;white-space:nowrap}
+.utc-btn:hover{background:var(--bg3);color:var(--t0)}
+.utc-btn.active{border-color:var(--blue);color:var(--blue)}
+.utc-dropdown{position:absolute;top:calc(100% + 4px);right:0;z-index:9999;
+  background:var(--bg2);border:1px solid var(--border);border-radius:6px;
+  min-width:130px;box-shadow:0 4px 16px rgba(0,0,0,.35);overflow:hidden;display:none}
+.utc-dropdown.open{display:block}
+.utc-opt{padding:6px 12px;font-size:11px;font-family:inherit;cursor:pointer;
+  color:var(--t1);transition:background .1s;white-space:nowrap}
+.utc-opt:hover{background:var(--bg3);color:var(--t0)}
+.utc-opt.selected{color:var(--blue)}
+.utc-wrap{position:relative;display:inline-block;margin-right:6px}
+
+.layout{display:flex;flex:1;overflow:hidden;min-height:0;position:relative}
+.side{width:var(--side);background:var(--bg1);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;
+  position:absolute;left:0;top:0;bottom:0;z-index:110;
+  box-shadow:4px 0 16px rgba(0,0,0,.35);}
+.side-search{padding:7px 8px;border-bottom:1px solid var(--border)}
+.s-input{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:5px;
+  color:var(--t0);font-family:inherit;font-size:11px;padding:5px 8px;outline:none}
+.s-input:focus{border-color:var(--blue)}
+.s-input::placeholder{color:var(--t2)}
+.load-bar-wrap{padding:5px 8px;border-bottom:1px solid var(--border)}
+.load-bar{height:2px;background:var(--bg3);border-radius:1px;overflow:hidden}
+.load-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--green),var(--blue));transition:width .3s}
+.load-txt{font-size:10px;color:var(--t2);margin-top:3px}
+
+.sort-tabs{display:flex;flex-direction:column;padding:4px 8px;gap:3px;border-bottom:1px solid var(--border);flex-shrink:0}
+.sort-tabs-row{display:flex;width:100%;gap:3px}
+.sort-tab{flex:1;background:transparent;border:1px solid var(--border);border-radius:4px;
+  color:var(--t2);font-family:inherit;font-size:9px;font-weight:600;padding:3px 2px;
+  cursor:pointer;text-align:center;text-transform:uppercase;letter-spacing:.3px;transition:all .15s}
+.sort-tab:hover{color:var(--t1);border-color:var(--t2)}
+.sort-tab.active{background:color-mix(in srgb,var(--blue) 12%,transparent);border-color:var(--blue);color:var(--blue)}
+.sort-tab.pump:not(.active){border-color:var(--border)}
+.pump-val{color:var(--green);font-weight:700;text-align:right;white-space:nowrap}
+.pump-val.neg{color:var(--red)}
+.anom-bid{color:var(--green);font-weight:700;text-align:right;white-space:nowrap}
+.anom-ask{color:var(--red);font-weight:700;text-align:right;white-space:nowrap}
+
+.list-head{display:grid;grid-template-columns:1fr 80px 68px;padding:5px 8px;
+  border-bottom:1px solid var(--border);font-size:10px;color:var(--t2);text-transform:uppercase;letter-spacing:.4px}
+.list-head>div{cursor:pointer;user-select:none;white-space:nowrap}
+.list-head>div:hover{color:var(--t1)}
+.list-head>div:not(:first-child){text-align:right}
+
+.sym-list{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--bg3) transparent}
+.sym-list::-webkit-scrollbar{width:3px}
+.sym-list::-webkit-scrollbar-thumb{background:var(--bg3)}
+.sym-row{display:grid;grid-template-columns:1fr 80px 68px;padding:6px 8px;cursor:pointer;
+  align-items:center;border-bottom:1px solid color-mix(in srgb,var(--t0) 3%,transparent);
+  transition:background .1s}
+.sym-row:hover{background:var(--bg2)}
+.sym-row.active{background:color-mix(in srgb,var(--blue) 8%,transparent);border-left:2px solid var(--blue)}
+.sym-row.dim{opacity:.35;pointer-events:none}
+.sym-name{font-size:11px;font-weight:600;display:flex;align-items:center;gap:4px}
+.pip{width:5px;height:5px;border-radius:50%;background:var(--bg3);flex-shrink:0}
+.sym-price{text-align:right;font-size:11px;color:var(--t1);white-space:nowrap;padding-right:4px}
+.sym-chg{text-align:right;font-size:11px;font-weight:600}
+.sym-chg.pos{color:var(--green)}.sym-chg.neg{color:var(--red)}.sym-chg.neu{color:var(--t2)}
+/* Volume value — same brightness as %, with blue accent */
+.sym-vol{text-align:right;font-size:11px;font-weight:600;color:var(--blue)}
+/* Spike multiplier colors */
+.spike-mid{color:var(--yellow)!important}
+.spike-high{color:var(--red)!important}
+
+.chart-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0;position:relative;width:100%}
+.toolbar{height:var(--bar);background:var(--bg1);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 10px;flex-shrink:0;gap:0;overflow-x:auto;overflow-y:hidden;
+  margin-left:var(--side);transition:margin-left .25s ease;}
+.screener-hidden .toolbar{margin-left:0;}
+.screener-hidden .ind-panel{left:0;}
+.toolbar::-webkit-scrollbar{height:0}
+.tb-grp{display:flex;align-items:center;gap:2px;padding:0 8px;border-right:1px solid var(--border);flex-shrink:0}
+.tb-grp:last-child{border-right:none;margin-left:auto}
+.tb-lbl{font-size:10px;color:var(--t2);margin-right:4px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+.tb-btn{background:transparent;border:1px solid transparent;border-radius:4px;color:var(--t1);
+  font-family:inherit;font-size:11px;font-weight:500;padding:3px 8px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.tb-btn:hover{background:var(--bg3);color:var(--t0)}
+.tb-btn.active{background:var(--blue);border-color:var(--blue);color:#fff}
+.poc-btn{background:transparent;border:1px solid var(--border);border-radius:4px;
+  font-family:inherit;font-size:10px;font-weight:600;padding:2px 7px;cursor:pointer;
+  transition:all .15s;white-space:nowrap;opacity:0.35}
+.poc-btn.on{opacity:1}
+.tb-sel{background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--t1);
+  font-family:inherit;font-size:11px;padding:3px 6px;cursor:pointer;outline:none}
+.tb-sel:focus{border-color:var(--blue)}
+.tb-inp{width:55px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;
+  color:var(--t0);font-family:inherit;font-size:11px;padding:3px 5px;outline:none}
+.tb-inp:focus{border-color:var(--blue)}
+.tb-inp::-webkit-outer-spin-button,.tb-inp::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.tb-inp[type=number]{-moz-appearance:textfield}
+.apply-btn{background:var(--blue);border:none;border-radius:4px;color:#fff;
+  font-family:inherit;font-size:11px;font-weight:600;padding:4px 10px;cursor:pointer;
+  transition:opacity .15s;white-space:nowrap}
+.apply-btn:hover{opacity:.82}
+.reload-btn{background:transparent;border:1px solid var(--border);border-radius:4px;
+  color:var(--t2);font-family:inherit;font-size:11px;padding:3px 8px;cursor:pointer;
+  transition:all .15s;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.reload-btn:hover{background:color-mix(in srgb,var(--yellow) 12%,transparent);color:var(--yellow);border-color:var(--yellow)}
+.reload-btn.loading{opacity:.55;pointer-events:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.reload-btn.loading .reload-ico{animation:spin .7s linear infinite}
+.step-btns{display:flex;flex-direction:column;gap:1px}
+.step-btn{background:var(--bg2);border:1px solid var(--border);border-radius:3px;
+  color:var(--t1);font-size:9px;line-height:1;padding:0;cursor:pointer;
+  width:22px;height:14px;display:flex;align-items:center;justify-content:center;
+  transition:all .15s;font-family:inherit;touch-action:manipulation;user-select:none}
+.step-btn:hover{background:var(--bg3);color:var(--t0);border-color:var(--blue)}
+.step-btn:active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.thresh-info{font-size:10px;color:var(--t2);white-space:nowrap}
+.thresh-info b{color:var(--yellow);font-weight:600}
+
+.charts-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0;position:relative}
+.main-pane{flex:1;position:relative;min-height:0}
+#mainChart{width:100%;height:100%;position:relative}
+.sub-pane{position:relative;flex-shrink:0;border-top:1px solid var(--border);display:none}
+.sub-pane.visible{display:block}
+.sub-pane-label{position:absolute;top:3px;left:6px;font-size:9px;color:var(--t2);
+  pointer-events:none;z-index:5;font-family:monospace;letter-spacing:.3px}
+.sub-pane-resize{position:absolute;top:0;left:0;right:0;height:5px;cursor:ns-resize;
+  z-index:10;background:transparent;transition:background .15s}
+.sub-pane-resize:hover{background:rgba(24,144,255,0.35)}
+canvas#bubbleCanvas{position:absolute;pointer-events:none;z-index:100;top:0;left:0}
+canvas#previewCanvas{position:absolute;pointer-events:none;z-index:101;top:0;left:0}
+.leg{position:absolute;top:6px;left:8px;z-index:11;display:flex;gap:12px;
+  font-size:10px;color:var(--t2);pointer-events:none}
+.leg-item{display:flex;align-items:center;gap:4px}
+.leg-dot{width:7px;height:7px;border-radius:50%}
+.leg-dot.sell{background:rgba(14,203,129,.65)}
+.leg-dot.buy{background:rgba(246,70,93,.65)}
+
+/* Drawing toolbar */
+.draw-toolbar{position:absolute;top:8px;right:8px;z-index:20;
+  display:flex;flex-direction:column;gap:3px;background:var(--draw-bg);
+  border:1px solid var(--border);border-radius:6px;padding:4px;user-select:none;}
+.draw-toolbar-drag{width:100%;height:8px;cursor:grab;display:flex;align-items:center;
+  justify-content:center;opacity:0.35;margin-bottom:1px}
+.draw-toolbar-drag:hover{opacity:0.7}
+.draw-toolbar-drag:active{cursor:grabbing}
+.draw-btn{background:transparent;border:1px solid transparent;border-radius:4px;
+  color:var(--t2);font-family:inherit;font-size:10px;padding:4px 6px;cursor:pointer;
+  transition:all .15s;white-space:nowrap;display:flex;align-items:center;gap:4px;
+  width:28px;height:28px;justify-content:center}
+.draw-btn:hover{background:var(--bg3);color:var(--t0);border-color:var(--border)}
+.draw-btn.active{background:color-mix(in srgb,var(--blue) 15%,transparent);border-color:var(--blue);color:var(--blue)}
+.draw-sep{height:1px;background:var(--border);margin:2px 0}
+
+/* Drawing context menu */
+.draw-menu{position:fixed;z-index:1000;background:var(--bg1);border:1px solid var(--border);
+  border-radius:6px;padding:4px;min-width:130px;box-shadow:0 4px 16px rgba(0,0,0,.35)}
+.draw-menu-item{padding:6px 10px;font-size:11px;color:var(--t1);cursor:pointer;border-radius:4px;
+  display:flex;align-items:center;gap:7px;white-space:nowrap}
+.draw-menu-item:hover{background:var(--bg3);color:var(--t0)}
+.draw-menu-item.danger{color:var(--red)}
+.draw-menu-item.danger:hover{background:color-mix(in srgb,var(--red) 15%,transparent)}
+.draw-menu-sep{height:1px;background:var(--border);margin:3px 0}
+
+/* Selected drawing highlight */
+.draw-selected-label{position:absolute;background:var(--blue);color:#fff;
+  font-size:9px;padding:2px 5px;border-radius:3px;pointer-events:none;z-index:15;
+  transform:translate(-50%,-100%);margin-top:-4px;white-space:nowrap}
+
+/* Screener toggle */
+.side{transition:transform .25s ease, box-shadow .25s ease;}
+.side.collapsed{transform:translateX(calc(-1 * var(--side)));box-shadow:none;}
+.screener-toggle{margin-left:auto;background:transparent;border:1px solid var(--border);
+  border-radius:4px;color:var(--t2);cursor:pointer;width:20px;height:20px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  transition:all .15s;font-size:14px;line-height:1;user-select:none;padding:0}
+.screener-toggle:hover{background:var(--bg3);color:var(--t0);border-color:var(--t2)}
+
+/* Indicators accordion */
+.ind-panel{position:absolute;top:0;left:var(--side);right:0;z-index:200;
+  background:var(--bg1);
+  box-shadow:0 6px 20px rgba(0,0,0,.35);
+  overflow:hidden;
+  transition:max-height .22s ease,opacity .18s ease,left .25s ease;
+  max-height:0;opacity:0;pointer-events:none;padding:0 12px;}
+.ind-panel.open{max-height:80px;opacity:1;pointer-events:auto;padding:8px 12px;
+  border-bottom:1px solid var(--border);}
+.ind-toggle-btn{background:transparent;border:1px solid var(--border);border-radius:4px;
+  color:var(--t2);font-family:inherit;font-size:11px;font-weight:500;
+  padding:4px 10px;cursor:pointer;transition:all .15s;white-space:nowrap;
+  display:flex;align-items:center;gap:5px;margin-left:6px}
+.ind-toggle-btn:hover{background:var(--bg3);color:var(--t0);border-color:var(--t1)}
+.ind-toggle-btn.open{background:color-mix(in srgb,var(--blue) 12%,transparent);border-color:var(--blue);color:var(--blue)}
+.ind-row{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.ind-chk{display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none;
+  font-size:11px;color:var(--t1);padding:2px 0}
+.ind-chk input[type=checkbox]{display:none}
+.ind-chk .chk-box{width:13px;height:13px;border:1px solid var(--border);border-radius:2px;
+  background:var(--bg3);display:flex;align-items:center;justify-content:center;
+  transition:all .15s;flex-shrink:0}
+.ind-chk input:checked+.chk-box{background:var(--blue);border-color:var(--blue)}
+.ind-chk input:checked+.chk-box::after{content:'✓';font-size:9px;color:#fff;line-height:1}
+.ind-chk:hover .chk-box{border-color:var(--blue)}
+
+/* DOM overlay canvas */
+canvas#domCanvas{position:absolute;pointer-events:none;z-index:99;top:0;left:0}
+
+/* ── Chart loading overlay ── */
+#chartLoadOverlay{
+  display:none;
+  position:absolute;
+  top:0;
+  left:var(--side);   /* don't cover the screener panel */
+  right:0;
+  bottom:0;
+  background:rgba(11,14,17,0.68);
+  z-index:105;        /* below .side(110) and .ind-panel(200) */
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+  gap:14px;
+  pointer-events:none;
+  transition:left .25s ease, top .22s ease;
+}
+[data-theme="light"] #chartLoadOverlay{background:rgba(238,240,245,0.75);}
+#chartLoadOverlay.visible{display:flex;}
+/* When screener is hidden */
+#chartLoadOverlay.screener-hidden{left:0;}
+/* When indicators panel is open (~56px) */
+#chartLoadOverlay.ind-open{top:56px;}
+
+/* Smooth rotating ring — pure CSS, no dashoffset jank */
+@keyframes chartSpin{
+  to{transform:rotate(360deg)}
+}
+.chart-spinner{
+  width:38px;height:38px;position:relative;
+}
+.chart-spinner-track{
+  width:38px;height:38px;border-radius:50%;
+  border:3px solid rgba(255,255,255,0.12);
+  position:absolute;top:0;left:0;
+}
+[data-theme="light"] .chart-spinner-track{border-color:rgba(0,0,0,0.10);}
+.chart-spinner-arc{
+  width:38px;height:38px;border-radius:50%;
+  border:3px solid transparent;
+  border-top-color:#ffffff;
+  border-right-color:rgba(255,255,255,0.35);
+  position:absolute;top:0;left:0;
+  animation:chartSpin .75s cubic-bezier(0.4,0,0.6,1) infinite;
+}
+[data-theme="light"] .chart-spinner-arc{
+  border-top-color:var(--t0);
+  border-right-color:rgba(0,0,0,0.20);
+}
+.chart-spinner-label{
+  font-size:12px;font-weight:600;
+  color:rgba(255,255,255,0.75);
+  letter-spacing:.6px;
+  font-family:inherit;
+}
+[data-theme="light"] .chart-spinner-label{color:var(--t1);}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="top-logo">
+    <div class="logo-box">S</div>
+    <div class="logo-txt">Screener</div>
+    <button class="screener-toggle" id="screenerToggle" onclick="toggleScreener()" title="Скрыть/показать скринер">&#8249;</button>
+  </div>
+  <div class="top-info">
+    <span class="sym-big" id="hSym">—</span>
+    <button class="copy-btn" id="copyBtn" onclick="copySymbol()" title="Копировать символ">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+        <rect x="4" y="4" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.2"/>
+        <path d="M3 8H2C1.45 8 1 7.55 1 7V2C1 1.45 1.45 1 2 1H7C7.55 1 8 1.45 8 2V3" stroke="currentColor" stroke-width="1.2"/>
+      </svg>
+    </button>
+  </div>
+  <div class="utc-wrap" id="utcWrap">
+    <button class="utc-btn" id="utcBtn" onclick="toggleUTCDropdown(event)" title="Выбрать часовой пояс">UTC+0 ▾</button>
+    <div class="utc-dropdown" id="utcDropdown"></div>
+  </div>
+  <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">
+    <span id="themeIcon">☀️</span><span id="themeTxt">Light</span>
+  </button>
+</div>
+<div class="layout">
+  <div class="side" id="sidePanel">
+    <div class="side-search"><input class="s-input" id="srch" placeholder="🔍  Поиск..."></div>
+    <div class="load-bar-wrap" id="loadWrap">
+      <div class="load-bar"><div class="load-fill" id="loadFill"></div></div>
+      <div class="load-txt" id="loadTxt">Загрузка...</div>
+    </div>
+    <div class="sort-tabs">
+      <div class="sort-tabs-row">
+        <button class="sort-tab active" id="st-vol24h" onclick="setSortTab('vol24h')">Vol 24h</button>
+        <button class="sort-tab" id="st-spike_2h_24h" onclick="setSortTab('spike_2h_24h')">2H/24H</button>
+      </div>
+      <div class="sort-tabs-row">
+        <button class="sort-tab pump" id="st-pump_3h" onclick="setSortTab('pump_3h')" style="flex:1">Pump</button>
+        <button class="sort-tab" id="st-anomaly" onclick="setSortTab('anomaly')" style="flex:1">Big Bid/Ask</button>
+      </div>
+    </div>
+    <div class="list-head">
+      <div>Символ</div>
+      <div>Цена</div>
+      <div id="sortColLabel">Vol 24h</div>
+    </div>
+    <div class="sym-list" id="symList"></div>
+  </div>
+  <div class="chart-area">
+    <div class="toolbar">
+      <div class="tb-grp">
+        <span class="tb-lbl">TF</span>
+        <button class="tb-btn" data-tf="1m" onclick="setTF('1m')">1m</button>
+        <button class="tb-btn active" data-tf="5m" onclick="setTF('5m')">5m</button>
+        <button class="tb-btn" data-tf="15m" onclick="setTF('15m')">15m</button>
+        <button class="tb-btn" data-tf="1h" onclick="setTF('1h')">1h</button>
+      </div>
+      <div class="tb-grp">
+        <span class="tb-lbl">POC</span>
+        <button class="poc-btn" data-poc="4H" style="color:#1f77b4;border-color:#1f77b4" onclick="togglePOC('4H')">4H</button>
+        <button class="poc-btn" data-poc="1D" style="color:#fc7601;border-color:#fc7601" onclick="togglePOC('1D')">1D</button>
+        <button class="poc-btn" data-poc="1W" style="color:#298b29;border-color:#298b29" onclick="togglePOC('1W')">1W</button>
+        <button class="poc-btn" data-poc="1M" style="color:#9467bd;border-color:#9467bd" onclick="togglePOC('1M')">1M</button>
+      </div>
+      <div class="tb-grp">
+        <span class="tb-lbl">Cluster</span>
+        <select class="tb-sel" id="modeEl"><option value="Auto">Auto</option><option value="Manual">Manual</option></select>
+        <span class="tb-lbl" id="pctLbl">Pct</span>
+        <input class="tb-inp" id="pctEl" type="number" value="99" min="50" max="100" step="0.1">
+        <span class="tb-lbl" id="volLbl" style="display:none">MinVol</span>
+        <input class="tb-inp" id="volEl" type="number" value="100" step="10" style="display:none">
+        <div class="step-btns">
+          <button class="step-btn" onclick="stepInput(1)" title="+">▲</button>
+          <button class="step-btn" onclick="stepInput(-1)" title="−">▼</button>
+        </div>
+        <button class="apply-btn" onclick="applySettings()">Apply</button>
+        <button class="ind-toggle-btn" id="indToggleBtn" onclick="toggleIndPanel()" title="Indicators">Indicators <span id="indToggleArrow">▾</span></button>
+      </div>
+      <div class="tb-grp">
+        <span class="thresh-info" id="threshInfo">—</span>
+        <button class="reload-btn" id="reloadBtn" onclick="reloadCurrentSymbol()" title="Перезагрузить данные монеты (очистить кэш)">
+          <svg class="reload-ico" width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M10.5 6A4.5 4.5 0 1 1 8.25 2.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            <path d="M8 1L8.5 3.5L6 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Reload
+        </button>
+      </div>
+    </div>
+    <div class="charts-wrap" id="chartsWrap">
+      <!-- Chart loading overlay — covers chartsWrap (below toolbar), respects screener via JS left offset -->
+      <div id="chartLoadOverlay">
+        <div class="chart-spinner">
+          <div class="chart-spinner-track"></div>
+          <div class="chart-spinner-arc"></div>
+        </div>
+        <div class="chart-spinner-label" id="chartLoadLabel">…</div>
+      </div>
+      <!-- Indicators accordion — position:absolute поверх графика -->
+      <div class="ind-panel" id="indPanel">
+        <div class="ind-row">
+        <label class="ind-chk"><input type="checkbox" id="ind-volume" onchange="toggleIndicator('volume',this.checked)"><span class="chk-box"></span>Volume</label>
+        <label class="ind-chk"><input type="checkbox" id="ind-delta" onchange="toggleIndicator('delta',this.checked)"><span class="chk-box"></span>Delta</label>
+        <label class="ind-chk"><input type="checkbox" id="ind-oi" onchange="toggleIndicator('oi',this.checked)"><span class="chk-box"></span>OI</label>
+        <label class="ind-chk"><input type="checkbox" id="ind-sma20" onchange="toggleIndicator('sma20',this.checked)"><span class="chk-box"></span>SMA 20</label>
+        <label class="ind-chk"><input type="checkbox" id="ind-ema200" onchange="toggleIndicator('ema200',this.checked)"><span class="chk-box"></span>EMA 200</label>
+        <span style="width:1px;background:var(--border);margin:0 4px;align-self:stretch"></span>
+        <label class="ind-chk"><input type="checkbox" id="ind-cluster" onchange="toggleIndicator('cluster',this.checked)"><span class="chk-box"></span>Cluster</label>
+        <label class="ind-chk"><input type="checkbox" id="ind-poc-all" onchange="toggleAllPOC(this.checked)"><span class="chk-box"></span>POC</label>
+        <span style="width:1px;background:var(--border);margin:0 4px;align-self:stretch"></span>
+        <label class="ind-chk"><input type="checkbox" id="ind-dom" onchange="toggleIndicator('dom',this.checked)"><span class="chk-box"></span>DOM</label>
+        <label class="ind-chk"><input type="checkbox" id="ind-limitlevels" onchange="toggleIndicator('limitlevels',this.checked)"><span class="chk-box"></span>Big Bid/Ask</label>
+        <span style="color:var(--t2);font-size:10px;margin-left:4px">mult</span>
+        <input class="tb-inp" id="limitMultEl" type="number" value="50" min="2" max="200" step="1" style="width:42px" title="Мультипликатор аномалии">
+
+        <button class="apply-btn" style="margin-left:4px" onclick="applyLimitParams()">Apply</button>
+        </div>
+      </div>
+      <div class="main-pane" id="mainPane">
+        <canvas id="domCanvas"></canvas>
+        <canvas id="bubbleCanvas"></canvas>
+        <canvas id="previewCanvas"></canvas>
+      <div class="draw-toolbar" id="drawToolbar">
+        <div class="draw-toolbar-drag" id="drawToolbarDrag" title="Перетащить">
+          <svg width="12" height="4" viewBox="0 0 12 4"><circle cx="2" cy="2" r="1.2" fill="currentColor"/><circle cx="6" cy="2" r="1.2" fill="currentColor"/><circle cx="10" cy="2" r="1.2" fill="currentColor"/></svg>
+        </div>
+        <button class="draw-btn active" id="db-none" title="Курсор (Esc)" onclick="setDrawTool('none')">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 2L2 11L5.5 7.5L7 12L8.5 11.5L7 7H11L2 2Z" fill="currentColor"/></svg>
+        </button>
+        <div class="draw-sep"></div>
+        <button class="draw-btn" id="db-hline" title="Горизонтальная линия" onclick="setDrawTool('hline')">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="1" y1="7" x2="13" y2="7" stroke="currentColor" stroke-width="1.5"/><circle cx="1" cy="7" r="1.5" fill="currentColor"/><circle cx="13" cy="7" r="1.5" fill="currentColor"/></svg>
+        </button>
+        <button class="draw-btn" id="db-tline" title="Линия тренда" onclick="setDrawTool('tline')">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><line x1="2" y1="12" x2="12" y2="2" stroke="currentColor" stroke-width="1.5"/><circle cx="2" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="2" r="1.5" fill="currentColor"/></svg>
+        </button>
+        <button class="draw-btn" id="db-rect" title="Прямоугольник" onclick="setDrawTool('rect')">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="2" y="3" width="10" height="8" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+        </button>
+        <button class="draw-btn" id="db-fib" title="Фибоначчи" onclick="setDrawTool('fib')">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><text x="2" y="11" font-size="9" fill="currentColor" font-family="monospace">ϕ</text></svg>
+        </button>
+        <button class="draw-btn" id="db-vp" title="Профиль объёма" onclick="setDrawTool('vp')">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1" y="2" width="7" height="2" rx="0.5" fill="currentColor" opacity="0.9"/>
+            <rect x="1" y="5" width="11" height="2" rx="0.5" fill="currentColor" opacity="0.9"/>
+            <rect x="1" y="8" width="5" height="2" rx="0.5" fill="currentColor" opacity="0.9"/>
+            <rect x="1" y="11" width="9" height="2" rx="0.5" fill="currentColor" opacity="0.9"/>
+          </svg>
+        </button>
+        <button class="draw-btn" id="db-pen" title="Карандаш (свободный)" onclick="setDrawTool('pen')">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M10 2L12 4L5 11L2 12L3 9L10 2Z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/>
+            <line x1="8.5" y1="3.5" x2="10.5" y2="5.5" stroke="currentColor" stroke-width="1.3"/>
+          </svg>
+        </button>
+        <div class="draw-sep"></div>
+        <button class="draw-btn" id="db-long" title="Позиция Лонг" onclick="setDrawTool('long')">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1" y="5" width="12" height="7" rx="1" fill="rgba(14,203,129,0.2)" stroke="#0ecb81" stroke-width="1"/>
+            <line x1="1" y1="5" x2="13" y2="5" stroke="#0ecb81" stroke-width="1.5"/>
+            <line x1="1" y1="12" x2="13" y2="12" stroke="#f6465d" stroke-width="1.5"/>
+            <line x1="1" y1="2" x2="13" y2="2" stroke="#0ecb81" stroke-width="1" stroke-dasharray="2,2"/>
+          </svg>
+        </button>
+        <button class="draw-btn" id="db-short" title="Позиция Шорт" onclick="setDrawTool('short')">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1" y="2" width="12" height="7" rx="1" fill="rgba(246,70,93,0.2)" stroke="#f6465d" stroke-width="1"/>
+            <line x1="1" y1="2" x2="13" y2="2" stroke="#f6465d" stroke-width="1.5"/>
+            <line x1="1" y1="9" x2="13" y2="9" stroke="#0ecb81" stroke-width="1.5"/>
+            <line x1="1" y1="12" x2="13" y2="12" stroke="#f6465d" stroke-width="1" stroke-dasharray="2,2"/>
+          </svg>
+        </button>
+        <div class="draw-sep"></div>
+        <button class="draw-btn" id="db-clear" title="Очистить всё" onclick="clearDrawings()" style="color:var(--red)">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 3L11 11M11 3L3 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div id="mainChart"></div>
+      </div><!-- /main-pane -->
+      <div class="sub-pane" id="paneVolume" style="height:80px">
+        <div class="sub-pane-label">Volume</div>
+        <canvas id="canvasVolume" style="width:100%;height:100%;display:block"></canvas>
+        <div class="sub-pane-resize" data-pane="paneVolume"></div>
+      </div>
+      <div class="sub-pane" id="paneDelta" style="height:65px">
+        <div class="sub-pane-label">Delta</div>
+        <canvas id="canvasDelta" style="width:100%;height:100%;display:block"></canvas>
+        <div class="sub-pane-resize" data-pane="paneDelta"></div>
+      </div>
+      <div class="sub-pane" id="paneOI" style="height:65px">
+        <div class="sub-pane-label">OI</div>
+        <canvas id="canvasOI" style="width:100%;height:100%;display:block"></canvas>
+        <div class="sub-pane-resize" data-pane="paneOI"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+// ─── State ───
+let symbols=[], activeSymbol=null, sortField='vol24h', sortAsc=false
+let absorption=[]
+
+let currentBars=[]
+
+// ─── Persist settings ───
+// ─── Server-side settings persistence ───
+let _saved = {}
+let _saveTimer = null
+
+async function _loadSettingsFromServer(){
+  try{
+    const r = await fetch('/api/settings')
+    if(r.ok) _saved = await r.json()
+  }catch(e){}
+}
+
+function saveSettings(){
+  // Debounce — save at most once per 2 seconds
+  if(_saveTimer) clearTimeout(_saveTimer)
+  _saveTimer = setTimeout(async ()=>{
+    try{
+      const s={
+        tf:activeTF,
+        symbol:activeSymbol,
+        mode:document.getElementById('modeEl')?.value,
+        pct:document.getElementById('pctEl')?.value,
+        vol:document.getElementById('volEl')?.value,
+        sortField,sortAsc,
+        pocState:{...pocState},
+        indState:{...indState},
+        indPanelOpen: document.getElementById('indPanel')?.classList.contains('open'),
+        screenerVisible,
+        theme: currentTheme,
+        utcOffset,
+        limitMult:   parseFloat(document.getElementById('limitMultEl')?.value)   || 8,
+      }
+      await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)})
+    }catch(e){}
+  }, 2000)
+}
+// _saved will be populated after async server fetch — defaults used until then
+let activeTF=_saved.tf||'5m'
+if(_saved.sortField){sortField=_saved.sortField;sortAsc=!!_saved.sortAsc}
+const pocState={"4H":false,"1D":false,"1W":false,"1M":false}
+if(_saved.pocState)Object.assign(pocState,_saved.pocState)
+
+// Indicator toggles state (dom:false by default)
+const indState={oi:false,volume:false,delta:false,sma20:false,ema200:false,cluster:false,dom:false,limitlevels:false}
+if(_saved.indState)Object.assign(indState,_saved.indState)
+let indPanelOpen=_saved.indPanelOpen||false
+const POC_COLORS={"4H":"#1f77b4","1D":"#fc7601","1W":"#298b29","1M":"#9467bd"}
+const BUBBLE_R={1:5,2:9,3:14,4:21}
+const pocSeriesMap={}
+const rowCache={}
+
+// ─── DOM Levels (overlay canvas, price-scale aligned) ───
+let _domData=null, _domInterval=null
+let _anomalyData={}  // symbol -> {distance_pct, side, score, count}
+let _anomalyLoaded=false
+const DOM_REFRESH_SEC=5
+const _domCanvas=document.getElementById('domCanvas')
+const _domCtx=_domCanvas.getContext('2d')
+
+// DOM bar width (px, grows left from price scale)
+const DOM_BAR_MAX_W=120
+
+// Estimate tick size from OHLC bar data (mirrors Python auto_incr)
+function _estimateTickFromBars(){
+  if(!currentBars||currentBars.length<2) return 0
+  const slice=currentBars.slice(Math.max(0,currentBars.length-200))
+  let sumRange=0
+  for(const b of slice) sumRange+=(b.high-b.low)
+  const avgRange=sumRange/slice.length
+  const lastClose=slice[slice.length-1].close
+  if(!lastClose||!avgRange) return 0
+  const mintick=Math.max(lastClose*1e-5,0.01)
+  const wn=avgRange/mintick
+  if(wn<=0) return mintick
+  const pow=Math.pow(10,Math.floor(Math.log10(wn)))
+  return 2*Math.ceil(wn/pow)*mintick*pow
+}
+
+// Returns {depth} — levels needed to cover visible price range from best bid/ask outward
+function _domCalcDepth(){
+  if(!candles) return {depth:100}
+  const clipH=chartPaneH()
+  const pTop=candles.coordinateToPrice(0)
+  const pBot=candles.coordinateToPrice(clipH)
+  if(!pTop||!pBot) return {depth:100}
+  const visRange=Math.abs(pTop-pBot)
+
+  // Get tick from existing data (most accurate), then bars estimate, then price decimals
+  let tick=0
+  if(_domData&&_domData.tick_size) tick=_domData.tick_size
+  if(!tick||tick<=0) tick=_estimateTickFromBars()
+  if(!tick||tick<=0){
+    const pMid=(pTop+pBot)/2
+    const s=pMid.toPrecision(6)
+    const dec=(s.split('.')[1]||'').replace(/0+$/,'').length
+    tick=Math.pow(10,-Math.max(dec,1))
+  }
+
+  // Binance sends levels from best bid/ask outward.
+  // We need visRange/2 worth of levels on each side (plus 10% buffer).
+  const depth=Math.max(20, Math.min(1000, Math.ceil(visRange / tick / 2 * 1.1)))
+  return {depth}
+}
+
+let _domZoomTimer=null
+
+function _startDomRefresh(){
+  _stopDomRefresh()
+  _domLastVisRange=0
+  refreshDom()
+  _domInterval=setInterval(refreshDom, DOM_REFRESH_SEC*1000)
+}
+function _stopDomRefresh(){
+  if(_domInterval){clearInterval(_domInterval);_domInterval=null}
+  if(_domZoomTimer){clearTimeout(_domZoomTimer);_domZoomTimer=null}
+}
+
+// Called on price-scale zoom change — instant redraw + debounced re-fetch
+let _domLastVisRange=0
+
+// Called on every drawBubbles — detects vertical zoom by comparing visible price range
+function _onDomZoomChange(){
+  if(!indState.dom||!candles) return
+  const clipH=chartPaneH()
+  const pTop=candles.coordinateToPrice(0)
+  const pBot=candles.coordinateToPrice(clipH)
+  if(!pTop||!pBot) return
+  const visRange=Math.abs(pTop-pBot)
+  // Re-fetch if range changed by more than 5%
+  if(_domLastVisRange===0 || Math.abs(visRange-_domLastVisRange)/_domLastVisRange>0.05){
+    _domLastVisRange=visRange
+    if(_domZoomTimer) clearTimeout(_domZoomTimer)
+    _domZoomTimer=setTimeout(refreshDom, 350)
+  }
+}
+
+async function refreshDom(){
+  if(!activeSymbol||!indState.dom) return
+  const {depth}=_domCalcDepth()
+  try{
+    const data=await fetch(`/api/dom/${encodeURIComponent(activeSymbol)}?depth=${depth}`).then(r=>{
+      if(!r.ok) throw new Error(r.status)
+      return r.json()
+    })
+    // Cache raw tick for next depth calc
+    if(data.bids&&data.bids.length>=2)
+      data.tick_size=Math.abs(data.bids[0].price-data.bids[1].price)
+    else if(_domData) data.tick_size=_domData.tick_size
+    _domData=data
+    drawDomOverlay()
+  }catch(e){ console.warn('DOM fetch error:',e) }
+}
+
+function drawDomOverlay(){
+  const rect=mainEl.getBoundingClientRect()
+  const dpr=window.devicePixelRatio||1
+  const CW=rect.width, CH=rect.height
+  _domCanvas.style.left=mainEl.offsetLeft+'px'
+  _domCanvas.style.top=mainEl.offsetTop+'px'
+  _domCanvas.style.width=CW+'px'
+  _domCanvas.style.height=CH+'px'
+  _domCanvas.width=Math.round(CW*dpr)
+  _domCanvas.height=Math.round(CH*dpr)
+
+  const dc=_domCtx
+  dc.setTransform(dpr,0,0,dpr,0,0)
+  dc.clearRect(0,0,CW,CH)
+
+  if(!indState.dom||!_domData) return
+
+  const bids=_domData.bids||[]
+  const asks=_domData.asks||[]
+  if(!bids.length&&!asks.length) return
+
+  const c0=getChartColors()
+  const clipH=chartPaneH()
+
+  dc.save()
+  dc.beginPath(); dc.rect(0,0,CW,clipH); dc.clip()
+
+  const PRICE_SCALE_W=72
+  const barRight=CW-PRICE_SCALE_W
+  const BAR_MAX=DOM_BAR_MAX_W
+  // Normalize bar widths by max qty of VISIBLE levels only (on screen right now).
+  // This way a huge limit order off-screen doesn't shrink everything visible.
+  const pTop=candles.coordinateToPrice(0)
+  const pBot=candles.coordinateToPrice(clipH)
+  const visMin=Math.min(pTop||0, pBot||0)
+  const visMax=Math.max(pTop||0, pBot||0)
+  const visibleQtys=[...bids,...asks]
+    .filter(l=>l.price>=visMin&&l.price<=visMax)
+    .map(l=>l.qty)
+  const maxQty=visibleQtys.length ? Math.max(...visibleQtys) : Math.max(...[...bids,...asks].map(l=>l.qty),1)
+
+  // Row height = real pixel distance between adjacent price levels
+  function getPxStep(levels){
+    for(let i=0;i<Math.min(levels.length-1,5);i++){
+      const y0=candles.priceToCoordinate(levels[i].price)
+      const y1=candles.priceToCoordinate(levels[i+1].price)
+      if(y0!==null&&y1!==null&&Math.abs(y1-y0)>0.3) return Math.abs(y1-y0)
+    }
+    return 0
+  }
+  const step=getPxStep(bids)||getPxStep(asks)||4
+  const ROW_H=Math.max(1.5, Math.min(step*0.92, 40))
+
+  function drawLevel(lv, isAsk){
+    const y=candles.priceToCoordinate(lv.price)
+    if(y===null||y<-ROW_H||y>clipH+ROW_H) return
+    const indW=Math.max(1,(lv.qty/maxQty)*BAR_MAX)
+    const y0=y-ROW_H/2
+    dc.fillStyle=isAsk?'rgba(246,70,93,0.80)':'rgba(14,203,129,0.75)'
+    dc.fillRect(barRight-indW, y0+0.5, indW, Math.max(1,ROW_H-1))
+    if(ROW_H>=8&&indW>28){
+      dc.font=`${Math.min(10,Math.max(8,ROW_H-2))}px monospace`
+      dc.textBaseline='middle'; dc.textAlign='left'
+      dc.fillStyle='rgba(255,255,255,0.55)'
+      dc.fillText(fmtVol(lv.qty), barRight-indW+3, y)
+    }
+  }
+
+  for(let i=0;i<asks.length;i++) drawLevel(asks[i], true)
+  for(let i=0;i<bids.length;i++) drawLevel(bids[i], false)
+
+  // Left border
+  dc.strokeStyle=c0.border; dc.lineWidth=0.5
+  dc.beginPath()
+  dc.moveTo(barRight-BAR_MAX-2,0); dc.lineTo(barRight-BAR_MAX-2,clipH)
+  dc.stroke()
+
+  // Spread dashed line
+  if(bids.length&&asks.length){
+    const yBid=candles.priceToCoordinate(bids[0].price)
+    const yAsk=candles.priceToCoordinate(asks[0].price)
+    if(yBid!==null&&yAsk!==null&&yBid>yAsk){
+      const yMid=(yBid+yAsk)/2
+      dc.strokeStyle='rgba(255,210,50,0.50)'; dc.lineWidth=1
+      dc.setLineDash([3,3])
+      dc.beginPath()
+      dc.moveTo(barRight-BAR_MAX-2,yMid); dc.lineTo(barRight,yMid)
+      dc.stroke(); dc.setLineDash([])
+      if(yBid-yAsk>12){
+        dc.font='bold 9px monospace'
+        dc.textAlign='right'; dc.textBaseline='middle'
+        dc.fillStyle='rgba(255,210,50,0.85)'
+        dc.fillText(fmt(asks[0].price-bids[0].price), barRight-4, yMid)
+      }
+    }
+  }
+  dc.restore()
+}
+
+function _domRedrawOnResize(){
+  if(indState.dom){ drawDomOverlay(); _onDomZoomChange() }
+  else _domCtx.clearRect(0,0,_domCanvas.width,_domCanvas.height)
+}
+
+
+
+let currentTheme = _saved.theme || 'dark'
+document.documentElement.setAttribute('data-theme', currentTheme)
+updateThemeBtn()
+
+// ─── UTC / Timezone offset ───
+// utcOffset: целое число минут сдвига от UTC (0 = UTC, 60 = UTC+1, -300 = UTC-5 и т.д.)
+// null = локальное время браузера
+let utcOffset = (_saved.utcOffset !== undefined) ? _saved.utcOffset : 0
+
+const _UTC_ZONES = [
+  { label: 'Local (браузер)', offset: null },
+  { label: 'UTC−12', offset: -720 },
+  { label: 'UTC−11', offset: -660 },
+  { label: 'UTC−10', offset: -600 },
+  { label: 'UTC−9',  offset: -540 },
+  { label: 'UTC−8',  offset: -480 },
+  { label: 'UTC−7',  offset: -420 },
+  { label: 'UTC−6',  offset: -360 },
+  { label: 'UTC−5',  offset: -300 },
+  { label: 'UTC−4',  offset: -240 },
+  { label: 'UTC−3',  offset: -180 },
+  { label: 'UTC−2',  offset: -120 },
+  { label: 'UTC−1',  offset:  -60 },
+  { label: 'UTC+0',  offset:    0 },
+  { label: 'UTC+1',  offset:   60 },
+  { label: 'UTC+2',  offset:  120 },
+  { label: 'UTC+3',  offset:  180 },
+  { label: 'UTC+4',  offset:  240 },
+  { label: 'UTC+5',  offset:  300 },
+  { label: 'UTC+5:30', offset: 330 },
+  { label: 'UTC+6',  offset:  360 },
+  { label: 'UTC+7',  offset:  420 },
+  { label: 'UTC+8',  offset:  480 },
+  { label: 'UTC+9',  offset:  540 },
+  { label: 'UTC+10', offset:  600 },
+  { label: 'UTC+11', offset:  660 },
+  { label: 'UTC+12', offset:  720 },
+]
+
+function _buildUTCDropdown(){
+  const dd = document.getElementById('utcDropdown')
+  if(!dd) return
+  dd.innerHTML = ''
+  for(const z of _UTC_ZONES){
+    const el = document.createElement('div')
+    el.className = 'utc-opt' + (z.offset === utcOffset ? ' selected' : '')
+    el.textContent = z.label
+    el.onclick = (e)=>{ e.stopPropagation(); selectUTCZone(z.offset) }
+    dd.appendChild(el)
+  }
+}
+
+function _utcBtnLabel(){
+  if(utcOffset === null){
+    const lm = -new Date().getTimezoneOffset()
+    const sign = lm >= 0 ? '+' : '−'
+    const h = Math.floor(Math.abs(lm)/60), m = Math.abs(lm)%60
+    return `Local (UTC${sign}${h}${m?':'+String(m).padStart(2,'0'):''})`
+  }
+  if(utcOffset === 0) return 'UTC+0'
+  const sign = utcOffset > 0 ? '+' : '−'
+  const abs  = Math.abs(utcOffset)
+  const h    = Math.floor(abs/60), m = abs%60
+  return `UTC${sign}${h}${m ? ':'+String(m).padStart(2,'0') : ''}`
+}
+
+function _utcShiftedDate(ts){
+  // ts — unix seconds
+  const offsetMs = (utcOffset !== null ? utcOffset : -new Date().getTimezoneOffset()) * 60000
+  return new Date(ts * 1000 + offsetMs)
+}
+
+function applyUTC(){
+  mainChart.applyOptions({
+    localization: {
+      timeFormatter: ts => {
+        const d  = _utcShiftedDate(ts)
+        const hh = String(d.getUTCHours()).padStart(2,'0')
+        const mm = String(d.getUTCMinutes()).padStart(2,'0')
+        const DD = String(d.getUTCDate()).padStart(2,'0')
+        const MO = String(d.getUTCMonth()+1).padStart(2,'0')
+        const YY = d.getUTCFullYear()
+        return `${DD}.${MO}.${YY} ${hh}:${mm}`
+      }
+    },
+    timeScale: {
+      tickMarkFormatter: (ts, tickMarkType) => {
+        const d  = _utcShiftedDate(ts)
+        const hh = String(d.getUTCHours()).padStart(2,'0')
+        const mm = String(d.getUTCMinutes()).padStart(2,'0')
+        const DD = String(d.getUTCDate()).padStart(2,'0')
+        const MO = String(d.getUTCMonth()+1).padStart(2,'0')
+        const YY = d.getUTCFullYear()
+        // tickMarkType: 0=Year, 1=Month, 2=DayOfMonth, 3=Time, 4=TimeWithSeconds
+        if(tickMarkType === 0) return `${YY}`
+        if(tickMarkType === 1) return `${DD}.${MO}.${YY}`
+        if(tickMarkType === 2) return `${DD}.${MO}`
+        return `${hh}:${mm}`
+      }
+    }
+  })
+  const btn = document.getElementById('utcBtn')
+  if(btn) btn.textContent = _utcBtnLabel() + ' ▾'
+  const isNonDefault = utcOffset !== 0
+  if(btn) btn.classList.toggle('active', isNonDefault)
+  _buildUTCDropdown()
+}
+
+function selectUTCZone(offset){
+  utcOffset = offset
+  applyUTC()
+  document.getElementById('utcDropdown')?.classList.remove('open')
+  saveSettings()
+}
+
+function toggleUTCDropdown(e){
+  e.stopPropagation()
+  _buildUTCDropdown()
+  document.getElementById('utcDropdown')?.classList.toggle('open')
+}
+
+// Закрываем дропдаун при клике вне него
+document.addEventListener('click', ()=>{
+  document.getElementById('utcDropdown')?.classList.remove('open')
+})
+
+function toggleTheme(){
+  currentTheme = currentTheme==='dark'?'light':'dark'
+  document.documentElement.setAttribute('data-theme', currentTheme)
+  saveSettings()
+  updateThemeBtn()
+  applyChartTheme()
+}
+function updateThemeBtn(){
+  const isDark = currentTheme==='dark'
+  document.getElementById('themeIcon').textContent = isDark ? '☀️' : '🌙'
+  document.getElementById('themeTxt').textContent = isDark ? 'Light' : 'Dark'
+}
+function getChartColors(){
+  const isDark = currentTheme==='dark'
+  return {
+    bg:        isDark?'#0b0e11':'#ffffff',
+    grid:      isDark?'#131722':'#f5f6fa',
+    text:      isDark?'#5c6b8a':'#9aa3b5',
+    border:    isDark?'#1c2030':'#e2e5ed',
+    crosshair: isDark?'#2a3350':'#d0d4de',
+    crossLbl:  isDark?'#1c2030':'#f0f1f5',
+  }
+}
+function applyChartTheme(){
+  const c = getChartColors()
+  const opts = {
+    layout:{background:{color:c.bg},textColor:c.text},
+    grid:{vertLines:{color:c.grid},horzLines:{color:c.grid}},
+    rightPriceScale:{borderColor:c.border},
+    timeScale:{borderColor:c.border},
+  }
+  mainChart.applyOptions({
+    ...opts,
+    crosshair:{vertLine:{color:c.crosshair,labelBackgroundColor:c.crossLbl},
+               horzLine:{color:c.crosshair,labelBackgroundColor:c.crossLbl}},
+  })
+  for(const ch of []){
+    if(ch) try{ ch.applyOptions(opts) }catch(e){}
+  }
+  drawBubbles()
+}
+
+// ─── Chart ───
+const mainEl=document.getElementById('mainChart')
+const c0=getChartColors()
+const mainChart=LightweightCharts.createChart(mainEl,{
+  layout:{background:{color:c0.bg},textColor:c0.text,fontFamily:"'SF Mono',monospace",fontSize:10},
+  grid:{vertLines:{color:c0.grid},horzLines:{color:c0.grid}},
+  crosshair:{mode:LightweightCharts.CrosshairMode.Normal,
+    vertLine:{color:c0.crosshair,labelBackgroundColor:c0.crossLbl},
+    horzLine:{color:c0.crosshair,labelBackgroundColor:c0.crossLbl}},
+  rightPriceScale:{borderColor:c0.border, autoScale:true, scaleMargins:{top:0.1,bottom:0.1}},
+  timeScale:{borderColor:c0.border,timeVisible:true,secondsVisible:false},
+  // Disable default scroll/scale so we can override wheel behavior
+  handleScroll:{mouseWheel:true, pressedMouseMove:true, horzTouchDrag:true, vertTouchDrag:true},
+  handleScale:{mouseWheel:true, pinch:true, axisPressedMouseMove:true, axisDoubleClickReset:true},
+})
+
+const candles=mainChart.addCandlestickSeries({
+  upColor:'#0ecb81',downColor:'#f6465d',
+  borderUpColor:'#0ecb81',borderDownColor:'#f6465d',
+  wickUpColor:'#0ecb81',wickDownColor:'#f6465d',
+  priceFormat:{type:'price',precision:8,minMove:0.00000001},
+})
+
+let _crosshairX = null  // current crosshair X coordinate in pixels
+let _crosshairTime = null
+
+mainChart.subscribeCrosshairMove(p=>{
+  if(p.seriesData&&p.seriesData.size>0){const b=p.seriesData.get(candles);if(b)updateOHLC(b)}
+  // Track crosshair position for oscillator sync
+  _crosshairX    = (p.point && p.point.x != null) ? p.point.x : null
+  _crosshairTime = p.time || null
+  scheduleRedraw()
+  if(drawState.tool!=='none') updateDrawPreview(p)
+})
+mainChart.timeScale().subscribeVisibleTimeRangeChange(scheduleRedraw)
+mainChart.timeScale().subscribeVisibleLogicalRangeChange(scheduleRedraw)
+applyUTC()   // применяем сохранённый UTC-режим сразу после создания графика
+
+let _rafId=null
+function scheduleRedraw(){
+  if(_rafId)return
+  _rafId=requestAnimationFrame(()=>{_rafId=null; drawBubbles(); _redrawAllOscillators()})
+}
+
+// ─── Custom wheel zoom (price scale only) ───
+// Horizontal zoom uses LightweightCharts built-in mouseWheel (no drift).
+// We only intercept wheel events over the right price scale for vertical zoom.
+const chartsWrap = document.getElementById('chartsWrap')
+
+let vMarginTop = 0.1, vMarginBot = 0.1
+const V_MARGIN_MIN = 0, V_MARGIN_MAX = 0.48
+
+// Use capture:true so we intercept BEFORE LightweightCharts gets the event
+chartsWrap.addEventListener('wheel', e=>{
+  const rect = document.getElementById('mainPane').getBoundingClientRect()
+  const priceScaleW = 72
+  const isOverPriceScale = e.clientX > rect.right - priceScaleW
+
+  if(isOverPriceScale){
+    e.preventDefault()
+    e.stopPropagation()
+    e.stopImmediatePropagation()
+    const delta = e.deltaY < 0 ? -0.025 : 0.025
+    vMarginTop = Math.min(V_MARGIN_MAX, Math.max(V_MARGIN_MIN, vMarginTop + delta))
+    vMarginBot = Math.min(V_MARGIN_MAX, Math.max(V_MARGIN_MIN, vMarginBot + delta))
+    mainChart.applyOptions({
+      rightPriceScale:{
+        autoScale: true,
+        scaleMargins:{ top: vMarginTop, bottom: vMarginBot }
+      }
+    })
+    scheduleRedraw()
+    _onDomZoomChange()
+  }
+}, {passive:false, capture:true})
+
+// ─── POC ───
+// Перетаскивание ценовой шкалы мышью — ловим mousemove по всему враперу
+chartsWrap.addEventListener('mousemove', e=>{
+  const rect = document.getElementById('mainPane').getBoundingClientRect()
+  if(e.buttons===1 && e.clientX > rect.right - 72){ scheduleRedraw(); _onDomZoomChange() }
+})
+let pocSegmentCache={}
+
+function clearPocSeries(){
+  for(const label in pocSeriesMap){
+    for(const s of pocSeriesMap[label]){try{mainChart.removeSeries(s)}catch(e){}}
+    delete pocSeriesMap[label]
+  }
+  pocSegmentCache={}
+}
+
+function renderPOC(segments){
+  const byLabel={}
+  for(const seg of segments){
+    if(!byLabel[seg.label])byLabel[seg.label]=[]
+    byLabel[seg.label].push(seg)
+  }
+  for(const label in pocSeriesMap){
+    if(!byLabel[label]){
+      for(const s of pocSeriesMap[label]){try{mainChart.removeSeries(s)}catch(e){}}
+      delete pocSeriesMap[label]; delete pocSegmentCache[label]
+    }
+  }
+  for(const [label,segs] of Object.entries(byLabel)){
+    const color=POC_COLORS[label]||'#fff'
+    const prev=pocSegmentCache[label]||[]
+    if(prev.length===segs.length&&pocSeriesMap[label]){
+      let changed=false
+      for(let i=0;i<segs.length;i++){
+        if(prev[i].x0!==segs[i].x0||prev[i].x1!==segs[i].x1||prev[i].y!==segs[i].y){changed=true;break}
+      }
+      if(!changed)continue
+      for(let i=0;i<segs.length;i++){
+        const p=prev[i],s=segs[i]
+        if(p.x0!==s.x0||p.x1!==s.x1||p.y!==s.y)
+          pocSeriesMap[label][i].setData([{time:s.x0,value:s.y},{time:s.x1,value:s.y}])
+      }
+      pocSegmentCache[label]=segs; continue
+    }
+    if(pocSeriesMap[label]){for(const s of pocSeriesMap[label]){try{mainChart.removeSeries(s)}catch(e){}}}
+    pocSeriesMap[label]=[]
+    for(const seg of segs){
+      const ls=mainChart.addLineSeries({
+        color,lineWidth:2,lineStyle:LightweightCharts.LineStyle.Solid,
+        priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false,title:'',
+      })
+      ls.setData([{time:seg.x0,value:seg.y},{time:seg.x1,value:seg.y}])
+      pocSeriesMap[label].push(ls)
+    }
+    pocSegmentCache[label]=segs
+  }
+}
+
+// ─── Drawing tools ───
+const DRAWING_TTL = 7 * 24 * 60 * 60 * 1000  // 1 неделя — совпадает с сервером
+const drawState = {tool:'none',drawing:false,startPoint:null,tempLine:null,dragging:false,dragStartPt:null,dragStartData:null,dragHandle:null,penPoints:null}
+let drawings = []
+let drawingIdCounter = Date.now()
+
+function saveDrawings(){
+  const data = drawings.map(d=>{ const {series,...rest}=d; return rest })
+  fetch('/api/drawings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).catch(()=>{})
+}
+function loadDrawings(){
+  fetch('/api/drawings').then(r=>r.json()).then(data=>{
+    const now = Date.now()
+    data.filter(d=>(now-d.createdAt)<DRAWING_TTL).forEach(d=>restoreDrawing(d))
+  }).catch(()=>{})
+}
+function restoreDrawing(d){
+  drawings.push({...d})
+  drawBubbles()
+}
+function updateSeriesStyle(d){
+  // hline и tline теперь на canvas — стиль применяется через drawBubbles()
+}
+function pointToSegmentDist(px,py,x1,y1,x2,y2){
+  const dx=x2-x1,dy=y2-y1,len=dx*dx+dy*dy
+  if(len===0)return Math.hypot(px-x1,py-y1)
+  const t=Math.max(0,Math.min(1,((px-x1)*dx+(py-y1)*dy)/len))
+  return Math.hypot(px-x1-t*dx,py-y1-t*dy)
+}
+function hitTest(px,py){
+  const T=9
+  for(let i=drawings.length-1;i>=0;i--){
+    const d=drawings[i]
+    if(d.type==='hline'){
+      const sy=candles.priceToCoordinate(d.price)
+      if(sy!==null&&Math.abs(py-sy)<T)return i
+    } else if(d.type==='tline'){
+      const x1=timeToX(d.t1),x2=timeToX(d.t2)
+      const y1=candles.priceToCoordinate(d.p1),y2=candles.priceToCoordinate(d.p2)
+      if(x1!==null&&x2!==null&&y1!==null&&y2!==null&&pointToSegmentDist(px,py,x1,y1,x2,y2)<T)return i
+    } else if(d.type==='rect'||d.type==='vp'){
+      const x1=timeToX(d.t1),x2=timeToX(d.t2)
+      const y1=candles.priceToCoordinate(d.p1),y2=candles.priceToCoordinate(d.p2)
+      if(x1===null||x2===null||y1===null||y2===null)continue
+      const rx=Math.min(x1,x2),ry=Math.min(y1,y2),rw=Math.abs(x2-x1),rh=Math.abs(y2-y1)
+      if(px>=rx-T&&px<=rx+rw+T&&py>=ry-T&&py<=ry+rh+T&&(px<=rx+T||px>=rx+rw-T||py<=ry+T||py>=ry+rh-T))return i
+    } else if(d.type==='fib'){
+      const x1=timeToX(d.t1),x2=timeToX(d.t2)
+      if(x1===null||x2===null)continue
+      const cx1=Math.min(x1,x2),cx2=Math.max(x1,x2)
+      if(px<cx1-T||px>cx2+T)continue
+      for(const lv of [0,0.236,0.382,0.5,0.618,0.786,1]){
+        const y=candles.priceToCoordinate(d.p1+(d.p2-d.p1)*lv)
+        if(y!==null&&Math.abs(py-y)<T)return i
+      }
+    } else if(d.type==='long'||d.type==='short'){
+      const x1=timeToX(d.t1),x2=timeToX(d.t2)
+      if(x1===null||x2===null)continue
+      const cx1=Math.min(x1,x2),cx2=Math.max(x1,x2)
+      if(px<cx1-T||px>cx2+T)continue
+      for(const price of [d.entry,d.stop,d.take]){
+        const y=candles.priceToCoordinate(price)
+        if(y!==null&&Math.abs(py-y)<T)return i
+      }
+    } else if(d.type==='pen'&&d.points&&d.points.length>1){
+      for(let j=1;j<d.points.length;j++){
+        const ax=timeToX(d.points[j-1].time), ay=candles.priceToCoordinate(d.points[j-1].price)
+        const bx=timeToX(d.points[j].time),   by=candles.priceToCoordinate(d.points[j].price)
+        if(ax===null||ay===null||bx===null||by===null)continue
+        if(pointToSegmentDist(px,py,ax,ay,bx,by)<T)return i
+      }
+    }
+  }
+  return -1
+}
+function selectDrawing(idx){
+  drawings.forEach((d,i)=>{d.selected=(i===idx);updateSeriesStyle(d)})
+  drawBubbles()
+}
+function deleteSelected(){
+  const idx=drawings.findIndex(d=>d.selected)
+  if(idx>=0)removeDrawingAt(idx)
+}
+function removeDrawingAt(idx){
+  const d=drawings[idx]
+  if(d.series){try{mainChart.removeSeries(d.series)}catch(e){}}
+  drawings.splice(idx,1)
+  saveDrawings(); drawBubbles()
+}
+let ctxMenu=null
+function showContextMenu(x,y,idx){
+  hideContextMenu()
+  const d=drawings[idx]
+  const menu=document.createElement('div')
+  menu.className='draw-menu'
+  menu.style.cssText=`left:${x}px;top:${y}px`
+  const label={hline:'Горизонтальная',tline:'Линия тренда',rect:'Прямоугольник',fib:'Фибоначчи',vp:'Профиль объёма',long:'Позиция Лонг',short:'Позиция Шорт'}[d.type]||d.type
+  menu.innerHTML=`<div class="draw-menu-item" style="color:var(--t2);font-size:10px;cursor:default">${label}</div>
+    <div class="draw-menu-sep"></div>
+    <div class="draw-menu-item" id="ctxDup">⧉ Дублировать</div>
+    <div class="draw-menu-sep"></div>
+    <div class="draw-menu-item danger" id="ctxDel">✕ Удалить</div>`
+  document.body.appendChild(menu); ctxMenu=menu
+  menu.querySelector('#ctxDel').onclick=()=>{removeDrawingAt(idx);hideContextMenu()}
+  menu.querySelector('#ctxDup').onclick=()=>{duplicateDrawing(idx);hideContextMenu()}
+  setTimeout(()=>document.addEventListener('mousedown',e=>{
+    if(ctxMenu&&!ctxMenu.contains(e.target))hideContextMenu()
+  },{once:true}),0)
+}
+function hideContextMenu(){ if(ctxMenu){ctxMenu.remove();ctxMenu=null} }
+function duplicateDrawing(idx){
+  const d=drawings[idx]
+  const off=d.entry?d.entry*0.002:d.price?d.price*0.002:d.p1?Math.abs(d.p1)*0.002:5
+  const nd={...d,id:++drawingIdCounter,selected:false,createdAt:Date.now()}
+  if(nd.type==='hline') nd.price+=off
+  else if(nd.type==='long'||nd.type==='short'){nd.entry+=off;nd.stop+=off;nd.take+=off}
+  else{nd.p1+=off;nd.p2+=off}
+  restoreDrawing(nd); saveDrawings()
+}
+
+function setDrawTool(tool){
+  drawState.tool=tool; drawState.drawing=false; drawState.startPoint=null
+  if(drawState.tempLine){try{mainChart.removeSeries(drawState.tempLine)}catch(e){};drawState.tempLine=null}
+  clearPreview()
+  document.querySelectorAll('.draw-btn').forEach(b=>b.classList.remove('active'))
+  const btn=document.getElementById('db-'+tool)
+  if(btn)btn.classList.add('active')
+  mainEl.style.cursor=tool==='none'?'default':'crosshair'
+  if(tool!=='none')selectDrawing(-1)
+}
+function clearDrawings(){
+  for(const d of drawings){if(d.series){try{mainChart.removeSeries(d.series)}catch(e){}}}
+  drawings.length=0; saveDrawings(); drawBubbles()
+}
+// ─── Draggable draw toolbar ───
+;(function(){
+  const tb=document.getElementById('drawToolbar')
+  const handle=document.getElementById('drawToolbarDrag')
+  if(!tb||!handle) return
+  let _drag=null
+  handle.addEventListener('mousedown',e=>{
+    e.preventDefault(); e.stopPropagation()
+    const rect=tb.getBoundingClientRect()
+    const parentRect=tb.offsetParent.getBoundingClientRect()
+    tb.style.right='auto'
+    tb.style.top=(rect.top-parentRect.top)+'px'
+    tb.style.left=(rect.left-parentRect.left)+'px'
+    _drag={startX:e.clientX,startY:e.clientY,origLeft:parseFloat(tb.style.left)||0,origTop:parseFloat(tb.style.top)||0}
+    handle.style.cursor='grabbing'
+  })
+  document.addEventListener('mousemove',e=>{
+    if(!_drag) return
+    tb.style.left=Math.max(0,_drag.origLeft+(e.clientX-_drag.startX))+'px'
+    tb.style.top=Math.max(0,_drag.origTop+(e.clientY-_drag.startY))+'px'
+  })
+  document.addEventListener('mouseup',()=>{
+    if(!_drag) return
+    _drag=null; handle.style.cursor='grab'
+  })
+})()
+
+function getChartPoint(e){
+  const rect=mainEl.getBoundingClientRect()
+  const x=e.clientX-rect.left,y=e.clientY-rect.top
+  let t=mainChart.timeScale().coordinateToTime(x)
+  if(t==null){
+    // Ищем две валидные точки на видимой части шкалы для экстраполяции
+    const w=rect.width
+    let xA=null,tA=null,xB=null,tB=null
+    // Сканируем слева направо до правого края данных
+    for(let sx=20;sx<w-10;sx+=5){
+      const tt=mainChart.timeScale().coordinateToTime(sx)
+      if(tt!=null){if(xA===null){xA=sx;tA=tt}; xB=sx; tB=tt}
+    }
+    if(xA!=null&&xB!=null&&xB!==xA){
+      const pxPerSec=(xB-xA)/(tB-tA)
+      t=Math.round(tB+(x-xB)/pxPerSec)
+    }
+  }
+  const price=candles.coordinateToPrice(y)
+  return {x,y,time:t,price}
+}
+function updateDrawPreview(){}
+
+// ─── Handle points (точки на концах объектов) ───
+// Возвращает {idx, handle} если курсор на ручке, иначе null
+// handle: 'p1','p2' для tline; 'stop','take','t1','t2' для позиций
+const HANDLE_R = 7
+function hitHandle(px, py) {
+  for(let i=drawings.length-1;i>=0;i--){
+    const d=drawings[i]
+    if(!d.selected) continue
+    const handles = getHandles(d)
+    for(const h of handles){
+      if(h.x!=null && h.y!=null && Math.hypot(px-h.x, py-h.y) < HANDLE_R+3)
+        return {idx:i, handle:h.name}
+    }
+  }
+  return null
+}
+function getHandles(d){
+  if(d.type==='tline'){
+    const x1=timeToX(d.t1)
+    const x2=timeToX(d.t2)
+    const y1=candles.priceToCoordinate(d.p1)
+    const y2=candles.priceToCoordinate(d.p2)
+    return [{name:'p1',x:x1,y:y1},{name:'p2',x:x2,y:y2}]
+  }
+  if(d.type==='rect'||d.type==='fib'||d.type==='vp'){
+    const x1=timeToX(d.t1)
+    const x2=timeToX(d.t2)
+    const y1=candles.priceToCoordinate(d.p1)
+    const y2=candles.priceToCoordinate(d.p2)
+    if(x1==null||x2==null||y1==null||y2==null) return []
+    const lx=Math.min(x1,x2), rx=Math.max(x1,x2)
+    const ty=Math.min(y1,y2), by=Math.max(y1,y2)
+    const mx=(lx+rx)/2, my=(ty+by)/2
+    return [
+      {name:'tl', x:lx, y:ty},
+      {name:'tr', x:rx, y:ty},
+      {name:'bl', x:lx, y:by},
+      {name:'br', x:rx, y:by},
+      {name:'tm', x:mx, y:ty},
+      {name:'bm', x:mx, y:by},
+      {name:'ml', x:lx, y:my},
+      {name:'mr', x:rx, y:my},
+    ]
+  }
+  if(d.type==='long'||d.type==='short'){
+    const cx1=timeToX(d.t1)
+    const cx2=timeToX(d.t2)
+    const midX=((cx1||0)+(cx2||0))/2
+    return [
+      {name:'stop', x:midX, y:candles.priceToCoordinate(d.stop)},
+      {name:'take', x:midX, y:candles.priceToCoordinate(d.take)},
+      {name:'t1',   x:cx1,  y:candles.priceToCoordinate(d.entry)},
+      {name:'t2',   x:cx2,  y:candles.priceToCoordinate(d.entry)},
+    ]
+  }
+  return []
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){setDrawTool('none');selectDrawing(-1)}
+  if((e.key==='Delete'||e.key==='Backspace')&&drawState.tool==='none'){
+    const el=document.activeElement
+    if(el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'))return
+    deleteSelected()
+  }
+})
+mainEl.addEventListener('contextmenu',e=>{
+  e.preventDefault()
+  if(drawState.tool!=='none'){setDrawTool('none');return}
+  const pt=getChartPoint(e),idx=hitTest(pt.x,pt.y)
+  if(idx>=0){selectDrawing(idx);showContextMenu(e.clientX,e.clientY,idx)}
+})
+
+mainEl.addEventListener('mousedown',e=>{
+  if(e.button!==0)return
+  const pt=getChartPoint(e)
+  if(pt.time==null||pt.price==null)return
+  hideContextMenu()
+
+  if(drawState.tool==='none'){
+    // Сначала проверяем ручки выбранного объекта
+    const hh=hitHandle(pt.x,pt.y)
+    if(hh){
+      drawState.dragging=true
+      drawState.dragHandle=hh.handle
+      drawState.dragStartPt=pt
+      drawState.dragStartData={...drawings[hh.idx]}
+      mainChart.applyOptions({handleScroll:false,handleScale:false})
+      e.stopPropagation(); e.preventDefault(); return
+    }
+    const idx=hitTest(pt.x,pt.y)
+    if(idx>=0){
+      selectDrawing(idx)
+      drawState.dragging=true; drawState.dragHandle=null
+      drawState.dragStartPt=pt
+      drawState.dragStartData={...drawings[idx]}
+      mainChart.applyOptions({handleScroll:false,handleScale:false})
+      e.stopPropagation(); e.preventDefault()
+    } else {
+      selectDrawing(-1)
+    }
+    return
+  }
+
+  // ─── Инструменты рисования ───
+  if(drawState.tool==='hline'){
+    drawings.push({id:++drawingIdCounter,type:'hline',price:pt.price,selected:false,createdAt:Date.now()})
+    saveDrawings(); drawBubbles()
+    setDrawTool('none')
+    return
+  }
+  if(drawState.tool==='pen'){
+    // Начинаем рисование — блокируем скролл графика
+    drawState.drawing=true
+    drawState.penPoints=[{time:pt.time,price:pt.price}]
+    mainChart.applyOptions({handleScroll:false,handleScale:false})
+    e.stopPropagation(); e.preventDefault()
+    return
+  }
+  if(drawState.tool==='long'||drawState.tool==='short'){
+    if(!drawState.drawing){
+      const entry=pt.price
+      const risk=entry*0.01
+      const isLong=drawState.tool==='long'
+      const stop=isLong?entry-risk:entry+risk
+      const take=isLong?entry+risk*2:entry-risk*2
+      // Определяем span в секундах на основе текущего таймфрейма (20 баров)
+      const tfSecs={'1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'1d':86400}
+      const barSec=tfSecs[activeTF]||300
+      const span=barSec*20
+      // t1 = точка клика, t2 = +20 баров вправо
+      const t1=Math.round(pt.time)
+      const t2=Math.round(pt.time+span)
+      const d={id:++drawingIdCounter,type:drawState.tool,
+        t1,t2,entry,stop,take,selected:true,createdAt:Date.now()}
+      drawings.push(d)
+      selectDrawing(drawings.length-1)
+      drawState.drawing=false
+      saveDrawings(); drawBubbles()
+      setDrawTool('none')
+    }
+    return
+  }
+  if(!drawState.drawing){
+    drawState.drawing=true; drawState.startPoint=pt
+    mainChart.applyOptions({handleScroll:false,handleScale:false})
+  } else {
+    const sp=drawState.startPoint,ep=pt
+    if(drawState.tool==='tline'){
+      drawings.push({id:++drawingIdCounter,type:'tline',t1:sp.time,t2:ep.time,p1:sp.price,p2:ep.price,selected:false,createdAt:Date.now()})
+    } else if(drawState.tool==='rect'){
+      drawings.push({id:++drawingIdCounter,type:'rect',t1:sp.time,t2:ep.time,p1:sp.price,p2:ep.price,selected:false,createdAt:Date.now()})
+    } else if(drawState.tool==='fib'){
+      drawings.push({id:++drawingIdCounter,type:'fib',t1:sp.time,t2:ep.time,p1:sp.price,p2:ep.price,selected:false,createdAt:Date.now()})
+    } else if(drawState.tool==='vp'){
+      drawings.push({id:++drawingIdCounter,type:'vp',t1:sp.time,t2:ep.time,p1:sp.price,p2:ep.price,selected:false,createdAt:Date.now()})
+    }
+    drawState.drawing=false; drawState.startPoint=null
+    mainChart.applyOptions({handleScroll:true,handleScale:true})
+    saveDrawings(); drawBubbles()
+    setDrawTool('none')
+  }
+})
+
+mainEl.addEventListener('mousemove',e=>{
+  const pt=getChartPoint(e)
+  if(pt.time==null||pt.price==null)return
+
+  if(drawState.dragging){
+    e.preventDefault()
+    // stopPropagation убран — событие идёт дальше к LightweightCharts для синхронного crosshair
+    const dp=pt.price-drawState.dragStartPt.price
+    const dt=pt.time-drawState.dragStartPt.time
+    const src=drawState.dragStartData
+    const idx=drawings.findIndex(d=>d.selected)
+    if(idx<0){drawState.dragging=false;return}
+    const d=drawings[idx]
+    const h=drawState.dragHandle
+
+    if(d.type==='hline'){
+      d.price=src.price+dp
+      if(d.series)d.series.setData([{time:1000000,value:d.price},{time:9999999999,value:d.price}])
+    } else if(d.type==='pen'&&src.points){
+      d.points=src.points.map(p=>({time:p.time+dt,price:p.price+dp}))
+    } else if(d.type==='tline'){
+      if(h==='p1'){d.t1=src.t1+dt;d.p1=src.p1+dp}
+      else if(h==='p2'){d.t2=src.t2+dt;d.p2=src.p2+dp}
+      else{d.p1=src.p1+dp;d.p2=src.p2+dp;d.t1=src.t1+dt;d.t2=src.t2+dt}
+      if(d.series)try{d.series.setData([{time:d.t1,value:d.p1},{time:d.t2,value:d.p2}])}catch(ex){}
+    } else if(d.type==='rect'||d.type==='fib'||d.type==='vp'){
+      if(h){
+        // Ручки углов/краёв прямоугольника
+        const st1=src.t1,st2=src.t2,sp1=src.p1,sp2=src.p2
+        if(h==='tl'){d.t1=st1+dt;d.p1=sp1+dp}
+        else if(h==='tr'){d.t2=st2+dt;d.p1=sp1+dp}
+        else if(h==='bl'){d.t1=st1+dt;d.p2=sp2+dp}
+        else if(h==='br'){d.t2=st2+dt;d.p2=sp2+dp}
+        else if(h==='tm'){d.p1=sp1+dp}
+        else if(h==='bm'){d.p2=sp2+dp}
+        else if(h==='ml'){d.t1=st1+dt}
+        else if(h==='mr'){d.t2=st2+dt}
+        else{d.p1=sp1+dp;d.p2=sp2+dp;d.t1=st1+dt;d.t2=st2+dt}
+      } else {
+        d.p1=src.p1+dp;d.p2=src.p2+dp;d.t1=src.t1+dt;d.t2=src.t2+dt
+      }
+    } else if(d.type==='long'||d.type==='short'){
+      const isLong=d.type==='long'
+      const minGap=d.entry*0.0001
+      if(h==='stop'){
+        const newStop=src.stop+dp
+        d.stop=isLong?Math.min(newStop,d.entry-minGap):Math.max(newStop,d.entry+minGap)
+      } else if(h==='take'){
+        const newTake=src.take+dp
+        d.take=isLong?Math.max(newTake,d.entry+minGap):Math.min(newTake,d.entry-minGap)
+      } else if(h==='t1'){d.t1=src.t1+dt}
+      else if(h==='t2'){d.t2=src.t2+dt}
+      else{d.entry=src.entry+dp;d.stop=src.stop+dp;d.take=src.take+dp;d.t1=src.t1+dt;d.t2=src.t2+dt}
+    }
+    drawBubbles(); return
+  }
+
+  if(drawState.tool==='none'){
+    const hh=hitHandle(pt.x,pt.y)
+    if(hh){
+      const hname=hh.handle
+      mainEl.style.cursor=(hname==='p1'||hname==='p2'||hname==='t2')?'ew-resize':'ns-resize'
+    } else {
+      mainEl.style.cursor=hitTest(pt.x,pt.y)>=0?'grab':'default'
+    }
+  }
+})
+
+// Отдельный обработчик на document — ловит mousemove даже когда LightweightCharts
+// захватил события (зажата кнопка мыши при рисовании)
+document.addEventListener('mousemove',e=>{
+  if(drawState.tool==='none'&&!drawState.drawing){clearPreview();return}
+  const pt=getChartPoint(e)
+  if(pt.time==null||pt.price==null){clearPreview();return}
+  if(drawState.tool==='pen'&&drawState.drawing&&drawState.penPoints){
+    drawState.penPoints.push({time:pt.time,price:pt.price})
+    drawPreview({type:'pen',points:drawState.penPoints})
+    return
+  }
+  if(drawState.tool==='hline'){
+    drawPreview({type:'hline',price:pt.price,selected:false})
+    return
+  }
+  if(drawState.tool==='long'||drawState.tool==='short'){
+    const entry=pt.price, risk=entry*0.01, isLong=drawState.tool==='long'
+    const span=((({'1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'1d':86400})[activeTF])||300)*20
+    drawPreview({type:drawState.tool,t1:pt.time,t2:pt.time+span,
+      entry,stop:isLong?entry-risk:entry+risk,take:isLong?entry+risk*2:entry-risk*2})
+    return
+  }
+  if(!drawState.drawing){clearPreview();return}
+  const sp=drawState.startPoint
+  if(drawState.tool==='tline'||drawState.tool==='rect'||drawState.tool==='fib'||drawState.tool==='vp')
+    drawPreview({type:drawState.tool,t1:sp.time,t2:pt.time,p1:sp.price,p2:pt.price})
+})
+
+mainEl.addEventListener('mouseup',e=>{
+  if(drawState.tool==='pen'&&drawState.drawing&&drawState.penPoints&&drawState.penPoints.length>1){
+    drawings.push({id:++drawingIdCounter,type:'pen',points:[...drawState.penPoints],selected:false,createdAt:Date.now()})
+    drawState.drawing=false; drawState.penPoints=null
+    mainChart.applyOptions({handleScroll:true,handleScale:true})
+    saveDrawings(); drawBubbles()
+    setDrawTool('none')
+    return
+  }
+  if(drawState.dragging){
+    drawState.dragging=false; drawState.dragHandle=null
+    drawState.dragStartPt=null; drawState.dragStartData=null
+    mainEl.style.cursor='default'; saveDrawings()
+    // Восстанавливаем скролл графика
+    mainChart.applyOptions({handleScroll:true,handleScale:true})
+  }
+})
+
+// ─── Touch support для рисования ───
+function getTouchPoint(e){
+  const t=e.touches[0]||e.changedTouches[0]
+  const rect=mainEl.getBoundingClientRect()
+  const x=t.clientX-rect.left,y=t.clientY-rect.top
+  return {x,y,time:mainChart.timeScale().coordinateToTime(x),price:candles.coordinateToPrice(y)}
+}
+
+let _touchLongTimer=null
+let _lastTap=0, _lastTapTarget=null
+mainEl.addEventListener('touchstart',e=>{
+  const t=e.touches[0]
+  const pt=getTouchPoint(e)
+  // Двойной тап — контекстное меню
+  const now=Date.now()
+  if(now-_lastTap<350){
+    clearTimeout(_touchLongTimer)
+    e.preventDefault()
+    if(pt.x!=null&&pt.y!=null){
+      const idx=hitTest(pt.x,pt.y)
+      if(idx>=0){selectDrawing(idx);showContextMenu(t.clientX,t.clientY,idx)}
+    }
+    _lastTap=0; return
+  }
+  _lastTap=now
+
+  if(drawState.tool==='none'){
+    // Проверяем попадание на объект — если да, блокируем скролл графика
+    if(pt.x!=null&&pt.y!=null){
+      const hh=hitHandle(pt.x,pt.y)
+      const idx=hh?hh.idx:hitTest(pt.x,pt.y)
+      if(idx>=0||hh){
+        e.preventDefault() // блокируем нативный скролл графика
+        const me=new MouseEvent('mousedown',{clientX:t.clientX,clientY:t.clientY,button:0})
+        mainEl.dispatchEvent(me)
+        return
+      }
+    }
+    // Долгое нажатие = контекстное меню (только если не на объекте)
+    _touchLongTimer=setTimeout(()=>{
+      if(pt.x!=null&&pt.y!=null){
+        const idx=hitTest(pt.x,pt.y)
+        if(idx>=0){selectDrawing(idx);showContextMenu(t.clientX,t.clientY,idx)}
+      }
+    },500)
+    return
+  }
+  e.preventDefault()
+  if(pt.time==null||pt.price==null)return
+  // Карандаш — сразу начинаем рисовать
+  if(drawState.tool==='pen'){
+    e.preventDefault()
+    const me=new MouseEvent('mousedown',{clientX:t.clientX,clientY:t.clientY,button:0})
+    mainEl.dispatchEvent(me)
+    return
+  }
+  // Для двухточечных инструментов: первый тач = первая точка (mousedown)
+  // Вторая точка будет по touchend
+  if(!drawState.drawing){
+    const me=new MouseEvent('mousedown',{clientX:t.clientX,clientY:t.clientY,button:0})
+    mainEl.dispatchEvent(me)
+  }
+  // Если уже рисуем — не делаем ничего на touchstart, ждём touchend
+},{passive:false})
+
+mainEl.addEventListener('touchmove',e=>{
+  clearTimeout(_touchLongTimer)
+  if(drawState.dragging){
+    e.preventDefault() // блокируем скролл при перетаскивании объекта
+    const me=new MouseEvent('mousemove',{clientX:e.touches[0].clientX,clientY:e.touches[0].clientY})
+    mainEl.dispatchEvent(me)
+    return
+  }
+  if(drawState.tool==='none'){
+    // Нативный скролл графика — обновляем canvas в следующем кадре
+    scheduleRedraw()
+    return
+  }
+  e.preventDefault()
+  const pt=getTouchPoint(e)
+  if(pt.time==null||pt.price==null)return
+  const me=new MouseEvent('mousemove',{clientX:e.touches[0].clientX,clientY:e.touches[0].clientY})
+  mainEl.dispatchEvent(me)
+},{passive:false})
+
+mainEl.addEventListener('touchend',e=>{
+  clearTimeout(_touchLongTimer)
+  const t=e.changedTouches[0]
+  if(drawState.dragging){
+    e.preventDefault()
+    const me=new MouseEvent('mouseup',{clientX:t.clientX,clientY:t.clientY})
+    mainEl.dispatchEvent(me)
+    return
+  }
+  if(drawState.tool==='none')return
+  e.preventDefault()
+  const me=new MouseEvent('mouseup',{clientX:t.clientX,clientY:t.clientY})
+  mainEl.dispatchEvent(me)
+  // Для двухшаговых инструментов — touchend = вторая точка
+  if(drawState.drawing){
+    const me2=new MouseEvent('mousedown',{clientX:t.clientX,clientY:t.clientY,button:0})
+    mainEl.dispatchEvent(me2)
+  }
+},{passive:false})
+setTimeout(loadDrawings,500)
+
+// ─── Volume Profile расчёт ───
+function calcVolumeProfile(t1, t2, p1, p2, numBins){
+  const tMin=Math.min(t1,t2), tMax=Math.max(t1,t2)
+  if(tMin>=tMax||!currentBars.length) return null
+  // Only bars inside time window
+  const barsInRange = currentBars.filter(b => b.time >= tMin && b.time <= tMax)
+  if(!barsInRange.length) return null
+  // Anchor price range to actual data — prevents "swimming" when box dragged into empty area
+  const dataHigh = Math.max(...barsInRange.map(b => b.high))
+  const dataLow  = Math.min(...barsInRange.map(b => b.low))
+  const pMin = Math.max(Math.min(p1,p2), dataLow)
+  const pMax = Math.min(Math.max(p1,p2), dataHigh)
+  if(pMax <= pMin) return null
+  const bins = new Array(numBins).fill(0).map(()=>({buy:0,sell:0}))
+  const binSize = (pMax-pMin)/numBins
+  for(const b of barsInRange){
+    const barVol=b.volume||0
+    const barHigh=b.high, barLow=b.low
+    if(barHigh<pMin||barLow>pMax)continue
+    const isBuy=b.close>=b.open
+    const totalRange=barHigh-barLow||1e-12
+    for(let i=0;i<numBins;i++){
+      const binLow=pMin+i*binSize
+      const binHigh=binLow+binSize
+      const overlapLow=Math.max(binLow,barLow)
+      const overlapHigh=Math.min(binHigh,barHigh)
+      if(overlapHigh<=overlapLow)continue
+      const frac=(overlapHigh-overlapLow)/totalRange
+      const vol=barVol*frac
+      if(isBuy)bins[i].buy+=vol; else bins[i].sell+=vol
+    }
+  }
+  return {bins,pMin,pMax,binSize}
+}
+const canvas=document.getElementById('bubbleCanvas')
+const ctx=canvas.getContext('2d')
+const pvCanvas=document.getElementById('previewCanvas')
+const pvCtx=pvCanvas.getContext('2d')
+
+function syncPreviewCanvas(){
+  const rect=mainEl.getBoundingClientRect()
+  pvCanvas.style.left=mainEl.offsetLeft+'px'; pvCanvas.style.top=mainEl.offsetTop+'px'
+  pvCanvas.style.width=rect.width+'px'; pvCanvas.style.height=rect.height+'px'
+  const dpr=window.devicePixelRatio||1
+  const pw=Math.round(rect.width*dpr), ph=Math.round(rect.height*dpr)
+  if(pvCanvas.width!==pw||pvCanvas.height!==ph){
+    pvCanvas.width=pw; pvCanvas.height=ph; pvCtx.scale(dpr,dpr)
+  }
+}
+function drawPreview(shape){
+  syncPreviewCanvas()
+  const cw=mainEl.getBoundingClientRect().width, ch=chartPaneH()
+  pvCtx.clearRect(0,0,pvCanvas.width,pvCanvas.height)
+  pvCtx.save()
+  pvCtx.beginPath(); pvCtx.rect(0,0,cw,ch); pvCtx.clip()
+  pvCtx.globalAlpha=0.65
+  drawCanvasShape(shape, pvCtx)
+  pvCtx.restore()
+}
+function clearPreview(){ pvCtx.clearRect(0,0,pvCanvas.width,pvCanvas.height) }
+
+// Высота шкалы времени LightweightCharts (стандартная ~26px)
+const TIME_SCALE_H = 26
+
+function syncCanvas(){
+  const rect=mainEl.getBoundingClientRect()
+  canvas.style.left=mainEl.offsetLeft+'px'; canvas.style.top=mainEl.offsetTop+'px'
+  canvas.style.width=rect.width+'px'; canvas.style.height=rect.height+'px'
+  const dpr=window.devicePixelRatio||1
+  canvas.width=rect.width*dpr; canvas.height=rect.height*dpr; ctx.scale(dpr,dpr)
+}
+
+// Возвращает высоту области графика без шкалы времени
+function chartPaneH(){
+  return mainEl.getBoundingClientRect().height - TIME_SCALE_H
+}
+
+function drawBubbles(){
+  syncCanvas()
+  const cw=mainEl.getBoundingClientRect().width
+  const ch=chartPaneH()
+  ctx.clearRect(0,0,canvas.width,canvas.height)
+  ctx.save()
+  ctx.beginPath(); ctx.rect(0,0,cw,ch); ctx.clip()
+  _drawBubblesCtx()
+  redrawCanvasShapesCtx()
+  ctx.restore()
+  _domRedrawOnResize()
+}
+
+function _drawBubblesCtx(){
+  _drawLimitLevels(ctx, canvas.width/(window.devicePixelRatio||1), canvas.height/(window.devicePixelRatio||1))
+  if(!absorption.length)return
+  const cw=canvas.width/(window.devicePixelRatio||1)
+  const ch=canvas.height/(window.devicePixelRatio||1)
+  for(const d of absorption){
+    const x=mainChart.timeScale().timeToCoordinate(d.ts_sec)
+    const y=candles.priceToCoordinate(d.mid)
+    if(x===null||y===null)continue
+    if(x<-30||x>cw+30||y<-30||y>ch+30)continue
+    const r=BUBBLE_R[d.size_cat]||5
+    const fc=d.is_up?'rgba(14,203,129,0.40)':'rgba(246,70,93,0.40)'
+    const sc=d.is_up?'rgba(14,203,129,0.90)':'rgba(246,70,93,0.90)'
+    ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2)
+    ctx.fillStyle=fc;ctx.fill()
+    ctx.strokeStyle=sc;ctx.lineWidth=1.5;ctx.stroke()
+    // Синяя точка по центру
+    ctx.beginPath();ctx.arc(x,y,1.5,0,Math.PI*2)
+    ctx.fillStyle='rgba(24,144,255,0.9)';ctx.fill()
+  }
+}
+
+function redrawCanvasShapes(preview){
+  syncCanvas()
+  const cw=mainEl.getBoundingClientRect().width
+  const ch=chartPaneH()
+  ctx.clearRect(0,0,canvas.width,canvas.height)
+  ctx.save()
+  ctx.beginPath(); ctx.rect(0,0,cw,ch); ctx.clip()
+  _drawBubblesCtx()
+  redrawCanvasShapesCtx(preview)
+  ctx.restore()
+}
+
+function redrawCanvasShapesCtx(preview){
+  for(const d of drawings){
+    drawCanvasShape(d)
+  }
+  if(preview) drawCanvasShape(preview)
+  // Рисуем ручки для выбранных объектов — синие сплошные точки
+  for(const d of drawings){
+    if(!d.selected) continue
+    const handles=getHandles(d)
+    for(const h of handles){
+      if(h.x==null||h.y==null) continue
+      ctx.save()
+      ctx.beginPath(); ctx.arc(h.x,h.y,HANDLE_R,0,Math.PI*2)
+      ctx.fillStyle='#1890ff'; ctx.fill()
+      ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke()
+      ctx.restore()
+    }
+  }
+}
+
+// Конвертирует время в X-координату, экстраполируя за пределы данных
+function timeToX(t){
+  const x=mainChart.timeScale().timeToCoordinate(t)
+  if(x!==null)return x
+  // Экстраполяция: сканируем шкалу и берём крайние валидные точки
+  const rect=mainEl.getBoundingClientRect()
+  const w=rect.width
+  let xA=null,tA=null,xB=null,tB=null
+  for(let sx=20;sx<w-10;sx+=5){
+    const tt=mainChart.timeScale().coordinateToTime(sx)
+    if(tt!=null){if(xA===null){xA=sx;tA=tt}; xB=sx; tB=tt}
+  }
+  if(xA==null||xB==null||xB===xA)return null
+  const pxPerSec=(xB-xA)/(tB-tA)
+  return xB+(t-tB)*pxPerSec
+}
+
+function drawCanvasShape(d, c){
+  c=c||ctx
+  const rect=mainEl.getBoundingClientRect()
+  const cw=rect.width, ch=rect.height
+  if(d.type==='hline'){
+    const y=candles.priceToCoordinate(d.price)
+    if(y===null)return
+    c.save()
+    const col=d.selected?'rgba(24,144,255,1)':'rgba(24,144,255,0.85)'
+    c.strokeStyle=col; c.lineWidth=d.selected?2:1.5; c.setLineDash([6,4])
+    c.beginPath(); c.moveTo(0,y); c.lineTo(cw,y); c.stroke()
+    c.setLineDash([])
+    // Подпись цены справа
+    c.font='10px monospace'; c.fillStyle=col; c.textBaseline='middle'; c.textAlign='right'
+    c.fillText(fmt(d.price), cw-4, y-7)
+    c.restore()
+  } else if(d.type==='tline'){
+    const x1=timeToX(d.t1), x2=timeToX(d.t2)
+    const y1=candles.priceToCoordinate(d.p1), y2=candles.priceToCoordinate(d.p2)
+    if(x1===null||x2===null||y1===null||y2===null)return
+    c.save()
+    const col=d.selected?'rgba(24,144,255,0.99)':'rgba(24,144,255,0.9)'
+    c.strokeStyle=col; c.lineWidth=d.selected?2.5:1.5
+    c.beginPath(); c.moveTo(x1,y1); c.lineTo(x2,y2); c.stroke()
+    c.restore()
+  } else if(d.type==='rect'){
+    const x1=timeToX(d.t1), x2=timeToX(d.t2)
+    const y1=candles.priceToCoordinate(d.p1), y2=candles.priceToCoordinate(d.p2)
+    if(x1===null||x2===null||y1===null||y2===null)return
+    c.save()
+    c.strokeStyle='rgba(24,144,255,0.8)'; c.fillStyle='rgba(24,144,255,0.08)'
+    c.lineWidth=1.5
+    const rx=Math.min(x1,x2),ry=Math.min(y1,y2),rw=Math.abs(x2-x1),rh=Math.abs(y2-y1)
+    c.fillRect(rx,ry,rw,rh); c.strokeRect(rx,ry,rw,rh)
+    c.restore()
+  } else if(d.type==='fib'){
+    const x1=timeToX(d.t1), x2=timeToX(d.t2)
+    if(x1===null||x2===null)return
+    const FIB_LEVELS=[0,0.236,0.382,0.5,0.618,0.786,1]
+    const FIB_COLORS=['#f6465d','#f0b90b','#1890ff','#0ecb81','#1890ff','#f0b90b','#f6465d']
+    const cx1=Math.min(x1,x2),cx2=Math.max(x1,x2)
+    const priceRange=d.p2-d.p1
+    c.save()
+    c.setLineDash([4,3])
+    FIB_LEVELS.forEach((lv,i)=>{
+      const price=d.p1+priceRange*lv
+      const y=candles.priceToCoordinate(price)
+      if(y===null)return
+      c.beginPath(); c.moveTo(cx1,y); c.lineTo(cx2,y)
+      c.strokeStyle=FIB_COLORS[i]; c.lineWidth=1.2; c.stroke()
+      c.setLineDash([])
+      c.fillStyle=FIB_COLORS[i]; c.font=`9px monospace`
+      c.fillText((lv*100).toFixed(1)+'%',cx1+4,y-3)
+      c.setLineDash([4,3])
+    })
+    c.restore()
+  } else if(d.type==='vp'){
+    const x1=timeToX(d.t1), x2=timeToX(d.t2)
+    const y1=candles.priceToCoordinate(d.p1), y2=candles.priceToCoordinate(d.p2)
+    if(x1===null||x2===null||y1===null||y2===null)return
+    const rx=Math.min(x1,x2), ry=Math.min(y1,y2), rw=Math.abs(x2-x1), rh=Math.abs(y2-y1)
+    const numBins=200
+    const vp=calcVolumeProfile(d.t1,d.t2,d.p1,d.p2,numBins)
+    c.save()
+    // Рамка зоны
+    c.strokeStyle=d.selected?'rgba(24,144,255,0.7)':'rgba(120,130,160,0.3)'
+    c.lineWidth=1; c.setLineDash([3,3])
+    c.strokeRect(rx,ry,rw,rh); c.setLineDash([])
+    if(vp){
+      const totals=vp.bins.map(b=>b.buy+b.sell)
+      const maxTotal=Math.max(...totals,1e-12)
+      const sumAll=totals.reduce((a,b)=>a+b,0)
+      const barMaxW=rw*0.85
+      // Use actual data bounds for bin rendering — prevents distortion when box dragged into empty space
+      const dataRyTop = candles.priceToCoordinate(vp.pMax)
+      const dataRyBot = candles.priceToCoordinate(vp.pMin)
+      if(dataRyTop===null||dataRyBot===null){c.restore();return}
+      const dataRh = dataRyBot - dataRyTop  // pixels for the actual data range
+      const binH = dataRh / numBins
+      // POC
+      let pocIdx=0,pocVol=0
+      totals.forEach((v,i)=>{if(v>pocVol){pocVol=v;pocIdx=i}})
+      // VAH/VAL — 70% объёма вокруг POC
+      const target=sumAll*0.70
+      let vahIdx=pocIdx, valIdx=pocIdx, accumulated=totals[pocIdx]
+      let lo=pocIdx, hi=pocIdx
+      while(accumulated<target&&(lo>0||hi<numBins-1)){
+        const canUp=hi<numBins-1, canDn=lo>0
+        const upVol=canUp?totals[hi+1]:0, dnVol=canDn?totals[lo-1]:0
+        if(canUp&&(!canDn||upVol>=dnVol)){hi++;accumulated+=upVol;vahIdx=hi}
+        else if(canDn){lo--;accumulated+=dnVol;valIdx=lo}
+        else break
+      }
+      // Offscreen canvas — непрозрачные цвета, потом накладываем одним drawImage.
+      // Это предотвращает накопление alpha при перекрытии тонких бинов на малом зуме.
+      const dpr=window.devicePixelRatio||1
+      const off=document.createElement('canvas')
+      off.width=Math.ceil(rw*dpr); off.height=Math.ceil(rh*dpr)
+      const oc=off.getContext('2d')
+      oc.scale(dpr,dpr)
+      for(let i=0;i<numBins;i++){
+        const binY=dataRyTop+(numBins-1-i)*binH
+        const total=totals[i]
+        const totalW=(total/maxTotal)*barMaxW
+        const isPOC=(i===pocIdx)
+        const inVA=(i>=valIdx&&i<=vahIdx)
+        oc.fillStyle=isPOC?'#1890ff':inVA?'rgba(24,144,255,0.50)':'rgba(24,144,255,0.25)'
+        oc.fillRect(0, binY-ry, totalW, Math.max(1,binH))
+        if(isPOC){
+          oc.strokeStyle='rgba(255,40,40,0.95)'; oc.lineWidth=1.5
+          oc.beginPath(); oc.moveTo(0,binY-ry+binH/2); oc.lineTo(rw,binY-ry+binH/2); oc.stroke()
+        }
+      }
+      c.save(); c.globalAlpha=0.85
+      c.drawImage(off, rx, ry, rw, rh)
+      c.restore()
+      // VAH линия
+      const vahBinY=dataRyTop+(numBins-1-vahIdx)*binH
+      c.strokeStyle='rgba(24,144,255,0.55)'; c.lineWidth=1; c.setLineDash([4,3])
+      c.beginPath(); c.moveTo(rx,vahBinY); c.lineTo(rx+rw,vahBinY); c.stroke()
+      // VAL линия
+      const valBinY=dataRyTop+(numBins-1-valIdx)*binH+binH
+      c.beginPath(); c.moveTo(rx,valBinY); c.lineTo(rx+rw,valBinY); c.stroke()
+      c.setLineDash([])
+      // Подписи VAH/VAL
+      c.font='bold 9px monospace'; c.fillStyle='rgba(24,144,255,0.8)'; c.textBaseline='bottom'; c.textAlign='left'
+      c.fillText('VAH',rx+2,vahBinY-1)
+      c.textBaseline='top'
+      c.fillText('VAL',rx+2,valBinY+1)
+    }
+    c.restore()
+  } else if(d.type==='long'||d.type==='short'){
+    const x1=timeToX(d.t1)
+    const x2=timeToX(d.t2)
+    if(x1===null||x2===null)return
+    const yEntry=candles.priceToCoordinate(d.entry)
+    const yStop =candles.priceToCoordinate(d.stop)
+    const yTake =candles.priceToCoordinate(d.take)
+    if(yEntry===null||yStop===null||yTake===null)return
+    const isLong=d.type==='long'
+    const cx1=Math.min(x1,x2), cx2=Math.max(x1,x2), cw=cx2-cx1
+    c.save()
+    // Зона риска
+    const riskTop=Math.min(yEntry,yStop), riskH=Math.abs(yEntry-yStop)
+    c.fillStyle='rgba(246,70,93,0.12)'; c.fillRect(cx1,riskTop,cw,riskH)
+    // Зона профита
+    const profTop=Math.min(yEntry,yTake), profH=Math.abs(yEntry-yTake)
+    c.fillStyle='rgba(14,203,129,0.12)'; c.fillRect(cx1,profTop,cw,profH)
+    // Линии
+    ;[[yEntry,isLong?'#0ecb81':'#f6465d',[]],[yStop,'#f6465d',[]],[yTake,isLong?'#0ecb81':'#f6465d',[4,3]]].forEach(([y,col,dash])=>{
+      c.beginPath(); c.moveTo(cx1,y); c.lineTo(cx2,y)
+      c.strokeStyle=col; c.lineWidth=1.5; c.setLineDash(dash); c.stroke(); c.setLineDash([])
+    })
+    // Подписи
+    c.font='bold 10px monospace'; c.textBaseline='middle'
+    const risk=Math.abs(d.entry-d.stop)
+    const rr=(Math.abs(d.take-d.entry)/risk).toFixed(1)
+    const pct=(risk/d.entry*100).toFixed(2)
+    ;[
+      {y:yTake, col:isLong?'#0ecb81':'#f6465d', txt:`TP ${fmt(d.take)}  RR ${rr}:1`},
+      {y:yEntry,col:isLong?'#0ecb81':'#f6465d', txt:`${isLong?'▲ LONG':'▼ SHORT'} ${fmt(d.entry)}`},
+      {y:yStop, col:'#f6465d',                  txt:`SL ${fmt(d.stop)}  -${pct}%`},
+    ].forEach(({y,col,txt})=>{
+      const tw=c.measureText(txt).width
+      c.fillStyle=col+'cc'; c.fillRect(cx1+4,y-8,tw+8,16)
+      c.fillStyle='#fff'; c.fillText(txt,cx1+8,y)
+    })
+    c.restore()
+  } else if(d.type==='pen'&&d.points&&d.points.length>1){
+    c.save()
+    c.strokeStyle=d.selected?'rgba(24,144,255,0.95)':'rgba(200,210,230,0.85)'
+    c.lineWidth=d.selected?2:1.5
+    c.lineJoin='round'; c.lineCap='round'
+    c.beginPath()
+    let started=false
+    for(const p of d.points){
+      const x=timeToX(p.time), y=candles.priceToCoordinate(p.price)
+      if(x===null||y===null){started=false;continue}
+      if(!started){c.moveTo(x,y);started=true}
+      else c.lineTo(x,y)
+    }
+    c.stroke()
+    c.restore()
+  }
+}
+
+// ─── Screener toggle ───
+let screenerVisible = true
+function toggleScreener(){
+  screenerVisible = !screenerVisible
+  const side = document.getElementById('sidePanel')
+  const btn  = document.getElementById('screenerToggle')
+  side.classList.toggle('collapsed', !screenerVisible)
+  document.querySelector('.chart-area').classList.toggle('screener-hidden', !screenerVisible)
+  // Sync overlay if it's showing
+  const overlay = document.getElementById('chartLoadOverlay')
+  if(overlay) overlay.classList.toggle('screener-hidden', !screenerVisible)
+
+  btn.innerHTML = screenerVisible ? '&#8249;' : '&#8250;'
+  btn.title     = screenerVisible ? 'Скрыть скринер' : 'Показать скринер'
+  drawBubbles()
+  saveSettings()
+}
+
+// ─── Live candle update — fires ~2s after each candle close ───
+// Syncs to real wall-clock candle boundaries (1m/5m/15m), waits for close,
+// then fetches and appends the new closed bar.
+let _liveBarTimeout=null
+let _liveBarSymbol=null
+let _liveBarTF=null
+
+const TF_SEC={'1m':60,'5m':300,'15m':900,'1h':3600}
+
+function _startLiveBar(symbol, tf){
+  _stopLiveBar()
+  _liveBarSymbol=symbol
+  _liveBarTF=tf
+  _scheduleNextBar()
+}
+function _stopLiveBar(){
+  if(_liveBarTimeout){clearTimeout(_liveBarTimeout);_liveBarTimeout=null}
+}
+function _scheduleNextBar(){
+  const tf=_liveBarTF
+  const period=TF_SEC[tf]||60
+  const nowSec=Date.now()/1000
+  // Seconds until next candle close + 2s buffer for WS data to arrive
+  const secsUntilClose=(period - (nowSec % period)) + 2
+  _liveBarTimeout=setTimeout(_onBarClose, secsUntilClose*1000)
+}
+async function _onBarClose(){
+  const symbol=_liveBarSymbol, tf=_liveBarTF
+  if(!symbol||!tf) return
+  try{
+    const bars=await fetch(`/api/bars/${encodeURIComponent(symbol)}?tf=${tf}`).then(r=>r.json())
+    if(bars&&bars.length>=2){
+      // bars[-1] = current open candle (ignore), bars[-2] = last closed candle
+      const closedBar=bars[bars.length-2]
+      const lastKnown=currentBars.length?currentBars[currentBars.length-1].time:0
+      if(closedBar.time>lastKnown){
+        // candles.update with a time newer than last bar adds a new candle
+        candles.update(closedBar)
+        currentBars.push({...closedBar})
+        console.log('[live] new bar added:', new Date(closedBar.time*1000).toISOString(), closedBar.close)
+      } else {
+        console.log('[live] no new bar yet, lastKnown=', new Date(lastKnown*1000).toISOString(), 'closed=', new Date(closedBar.time*1000).toISOString())
+      }
+    }
+  }catch(e){ console.warn('[live] fetch error', e) }
+  // Schedule next one
+  _scheduleNextBar()
+}
+
+// ─── Limit Levels (anomaly lines on chart) ───
+let _limitLevels = []       // [{price, qty, usd_val, side, first_seen, age_sec, score}]
+let _limitLevelsInterval = null
+
+async function _fetchLimitLevels(symbol){
+  if(!symbol||!indState.limitlevels) return
+  try{
+    const data = await fetch(`/api/limit_levels/${encodeURIComponent(symbol)}`).then(r=>r.json())
+    _limitLevels = data || []
+    drawBubbles()
+  }catch(e){}
+}
+
+async function applyLimitParams(){
+  const mult = parseFloat(document.getElementById('limitMultEl')?.value) || 8
+  try{
+    await fetch(`/api/set_limit_params?mult=${mult}`, {method:'POST'})
+  }catch(e){}
+  if(activeSymbol && indState.limitlevels) _fetchLimitLevels(activeSymbol)
+  saveSettings()
+}
+async function applyLimitMult(){ await applyLimitParams() }
+
+function _startLimitLevels(symbol){
+  _stopLimitLevels()
+  _limitLevels = []
+  _fetchLimitLevels(symbol)
+  _limitLevelsInterval = setInterval(()=>_fetchLimitLevels(symbol), 35000)
+}
+function _stopLimitLevels(){
+  if(_limitLevelsInterval){ clearInterval(_limitLevelsInterval); _limitLevelsInterval=null }
+  _limitLevels = []
+}
+
+function _drawLimitLevels(ctx, cw, ch){
+  if(!indState.limitlevels || !_limitLevels.length) return
+  const PRICE_SCALE_W = 72
+  const drawW = cw - PRICE_SCALE_W
+
+  for(const lv of _limitLevels){
+    const y = candles.priceToCoordinate(lv.price)
+    if(y === null || y < 0 || y > ch) continue
+
+    const isBid = lv.side === 'bid'
+    const col = isBid ? 'rgba(14,203,129,' : 'rgba(246,70,93,'
+
+    // first_seen is unix seconds — snap to the bar that was open at that moment.
+    // timeToX only works on exact bar timestamps; real-time first_seen falls between
+    // bars and the extrapolation loses sub-bar precision (two levels 13m apart on a
+    // 5m chart would both map to the same candle). Instead we binary-search currentBars
+    // for the last bar whose open time <= first_seen so each level starts at the exact
+    // candle it appeared in.
+    let x0 = null
+    if(lv.first_seen && currentBars.length){
+      let snapTime = null
+      for(let i = currentBars.length - 1; i >= 0; i--){
+        if(currentBars[i].time <= lv.first_seen){ snapTime = currentBars[i].time; break }
+      }
+      if(snapTime !== null) x0 = timeToX(snapTime)
+    }
+    const x1 = drawW
+
+    // Skip if start point is to the right of chart area (shouldn't happen)
+    if(x0 !== null && x0 >= drawW) continue
+
+    // Use actual x0 if on screen, otherwise start from left edge
+    const lineX0 = (x0 !== null && x0 >= 0) ? x0 : 0
+
+    // Draw solid line
+    ctx.save()
+    ctx.strokeStyle = col + '0.9)'
+    ctx.lineWidth = 2
+    ctx.setLineDash([])
+    ctx.beginPath()
+    ctx.moveTo(lineX0, y)
+    ctx.lineTo(x1, y)
+    ctx.stroke()
+
+    // Start dot at detection point if visible
+    if(x0 !== null && x0 >= 0 && x0 < drawW){
+      ctx.beginPath()
+      ctx.arc(x0, y, 3.5, 0, Math.PI * 2)
+      ctx.fillStyle = col + '1.0)'
+      ctx.fill()
+    }
+
+    // Label just left of price scale: age + $amount + Nx
+    const ageSec = lv.age_sec || 0
+    const ageStr = ageSec < 60 ? '<1m'
+      : ageSec < 3600 ? `${Math.floor(ageSec/60)}m`
+      : `${Math.floor(ageSec/3600)}h${Math.floor((ageSec%3600)/60)}m`
+    const usdVal = lv.usd_val || (lv.qty * lv.price)
+    const usdStr = usdVal >= 1e6
+      ? `$${(usdVal/1e6).toFixed(1)}M`
+      : usdVal >= 1e3
+        ? `$${(usdVal/1e3).toFixed(0)}K`
+        : `$${usdVal.toFixed(0)}`
+    const label = `${ageStr} ${usdStr} ${lv.score.toFixed(1)}x`
+
+    ctx.font = 'bold 9px monospace'
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'right'
+    ctx.fillStyle = col + '1.0)'
+    // Draw text background
+    const tw = ctx.measureText(label).width
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'
+    ctx.fillRect(drawW - tw - 10, y - 8, tw + 8, 16)
+    ctx.fillStyle = col + '1.0)'
+    ctx.fillText(label, drawW - 4, y)
+    ctx.restore()
+  }
+}
+
+// ─── DOM Anomaly fetch ───
+async function loadAnomalies(){
+  try{
+    const data=await fetch('/api/anomalies').then(r=>r.json())
+    _anomalyData={}
+    for(const a of data) _anomalyData[a.symbol]=a
+    _anomalyLoaded=true
+    if(sortField==='anomaly') renderList()
+  }catch(e){}
+}
+
+// ─── Sort tabs ───
+const SORT_COL_LABELS={name:'Имя',change:'24h%',vol24h:'Vol 24h',spike_2h_24h:'2H/24H',pump_3h:'Pump',anomaly:'Big Bid/Ask'}
+
+function setSortTab(field){
+  if(sortField===field){sortAsc=!sortAsc}
+  else{sortField=field;sortAsc=false}
+  document.querySelectorAll('.sort-tab').forEach(b=>b.classList.remove('active'))
+  const btn=document.getElementById('st-'+field)
+  if(btn)btn.classList.add('active')
+  document.getElementById('sortColLabel').textContent=SORT_COL_LABELS[field]||field
+  if(field==='anomaly') loadAnomalies()
+  renderList()
+}
+function fmtPump(v){
+  if(v==null||isNaN(v))return'—'
+  return(v>0?'+':'')+v.toFixed(2)+'%'
+}
+
+function fmtSpike(v){
+  if(v==null||isNaN(v))return'—'
+  return v.toFixed(2)+'x'
+}
+
+function spikeClass(v){
+  if(v==null)return'sym-vol'
+  if(v>=3)return'sym-vol spike-high'
+  if(v>=1.5)return'sym-vol spike-mid'
+  return'sym-vol'
+}
+
+// ─── List ───
+// #9: diff-обновление скринера вместо полного innerHTML rebuild.
+// При 400+ символах это устраняет большой DOM-reflow при каждом pollSymbols().
+// Стратегия:
+//   - rowCache хранит {symbol → {row, priceEl, col3El, nameEl}}
+//   - renderList() при смене сортировки/фильтра пересобирает список
+//     и переставляет существующие узлы или создаёт новые (но не дублирует)
+//   - updateScreenerRows() вызывается из pollSymbols() и меняет только данные
+
+function _buildCol3Html(s) {
+  const chg=s.change,cc=chg>0?'pos':chg<0?'neg':'neu'
+  const cs=chg!=null?(chg>0?'+':'')+chg.toFixed(2)+'%':'—'
+  if(sortField==='name'||sortField==='change'){
+    return`<div class="sym-chg ${cc}">${cs}</div>`
+  } else if(sortField==='vol24h'){
+    return`<div class="sym-vol">${fmtVol(s.vol24h)}</div>`
+  } else if(sortField==='spike_2h_24h'){
+    return`<div class="${spikeClass(s.spike_2h_24h)}">${fmtSpike(s.spike_2h_24h)}</div>`
+  } else if(sortField==='pump_3h'){
+    const pv=s.pump_3h
+    const cls=pv==null?'sym-vol':pv>=0?'pump-val':'pump-val neg'
+    return`<div class="${cls}">${pv==null?'—':(pv>0?'+':'')+pv.toFixed(2)+'%'}</div>`
+  } else if(sortField==='anomaly'){
+    const an=_anomalyData[s.symbol]
+    if(!an) return`<div class="sym-vol">—</div>`
+    const cls=an.side==='bid'?'anom-bid':'anom-ask'
+    const arrow=an.side==='bid'?'↓':'↑'
+    return`<div class="${cls}">${arrow}${an.distance_pct.toFixed(3)}%</div>`
+  }
+  return`<div class="sym-vol">${fmtVol(s.vol24h)}</div>`
+}
+
+function renderList(){
+  const q=document.getElementById('srch').value.toLowerCase()
+  let list=[...symbols]
+  if(q)list=list.filter(s=>s.symbol.toLowerCase().includes(q))
+  list.sort((a,b)=>{
+    let va,vb
+    if(sortField==='name'){va=a.symbol;vb=b.symbol}
+    else if(sortField==='change'){va=a.change||0;vb=b.change||0}
+    else if(sortField==='vol24h'){va=a.vol24h||0;vb=b.vol24h||0}
+    else if(sortField==='spike_2h_24h'){va=a.spike_2h_24h||0;vb=b.spike_2h_24h||0}
+    else if(sortField==='pump_3h'){va=a.pump_3h||0;vb=b.pump_3h||0}
+    else if(sortField==='anomaly'){
+      const da=_anomalyData[a.symbol]?.distance_pct
+      const db=_anomalyData[b.symbol]?.distance_pct
+      if(da==null&&db==null)return 0
+      if(da==null)return 1
+      if(db==null)return-1
+      return da-db
+    }
+    if(typeof va==='string')return sortAsc?va.localeCompare(vb):vb.localeCompare(va)
+    return sortAsc?va-vb:vb-va
+  })
+
+  const container=document.getElementById('symList')
+
+  // Создаём/обновляем строки для всех видимых символов
+  const symSet = new Set(list.map(s=>s.symbol))
+
+  // Удаляем строки для символов которых нет в текущем списке
+  for(const sym of Object.keys(rowCache)){
+    if(!symSet.has(sym)){
+      const entry = rowCache[sym]
+      if(entry.row.parentNode === container) container.removeChild(entry.row)
+      delete rowCache[sym]
+    }
+  }
+
+  // Создаём недостающие строки (без вставки в DOM)
+  for(const s of list){
+    if(!rowCache[s.symbol]){
+      const short=s.symbol.replace('/USDT:USDT','').replace('/USDT','')
+      const row=document.createElement('div')
+      row.className=`sym-row ${s.symbol===activeSymbol?'active':''} ${s.loaded?'':'dim'}`
+      row.dataset.sym=s.symbol
+      row.innerHTML=`
+        <div class="sym-name"><div class="pip"></div>${short}</div>
+        <div class="sym-price">${fmt(s.price)}</div>
+        <div class="sym-col3">${_buildCol3Html(s)}</div>`
+      row.onclick=()=>loadChart(s.symbol)
+      rowCache[s.symbol]={
+        row,
+        priceEl: row.querySelector('.sym-price'),
+        col3El:  row.querySelector('.sym-col3'),
+        price:   s.price,
+        col3Key: sortField,
+      }
+    }
+  }
+
+  // Расставляем строки в правильном порядке используя DocumentFragment
+  // (один reflow вместо N insertions)
+  const frag = document.createDocumentFragment()
+  for(const s of list){
+    const entry = rowCache[s.symbol]
+    // Обновляем данные ячеек
+    const newPrice = fmt(s.price)
+    if(entry.priceEl.textContent !== newPrice) entry.priceEl.textContent = newPrice
+    const newCol3 = _buildCol3Html(s)
+    if(entry.col3El.innerHTML !== newCol3) entry.col3El.innerHTML = newCol3
+    // active/dim классы
+    entry.row.className=`sym-row ${s.symbol===activeSymbol?'active':''} ${s.loaded?'':'dim'}`
+    frag.appendChild(entry.row)
+  }
+  container.appendChild(frag)
+}
+
+// Вызывается из pollSymbols() — обновляет только данные без сортировки/DOM-перестановок
+function updateScreenerRows(){
+  const symMap = {}
+  for(const s of symbols) symMap[s.symbol] = s
+  for(const sym of Object.keys(rowCache)){
+    const s = symMap[sym]
+    if(!s) continue
+    const entry = rowCache[sym]
+    const newPrice = fmt(s.price)
+    if(entry.priceEl.textContent !== newPrice) entry.priceEl.textContent = newPrice
+    const newCol3 = _buildCol3Html(s)
+    if(entry.col3El.innerHTML !== newCol3) entry.col3El.innerHTML = newCol3
+    entry.row.className=`sym-row ${sym===activeSymbol?'active':''} ${s.loaded?'':'dim'}`
+  }
+}
+
+// ─── Header ───
+let _activeSymbolFull = ''  // full symbol for copy e.g. "1INCH/USDT:USDT"
+
+function updateHeader(sym,price,change){
+  _activeSymbolFull = sym
+  const short=sym.replace('/USDT:USDT','').replace('/USDT','')
+  document.getElementById('hSym').textContent=short
+  document.title=short+' · Screener'
+}
+
+function copySymbol(){
+  if(!_activeSymbolFull) return
+  // Convert "1INCH/USDT:USDT" → "1INCHUSDT.P"
+  const base = _activeSymbolFull.split('/')[0]
+  const quote = (_activeSymbolFull.split('/')[1]||'').split(':')[0]
+  const copyStr = base + quote + '.P'
+  navigator.clipboard.writeText(copyStr).then(()=>{
+    const btn = document.getElementById('copyBtn')
+    btn.classList.add('copied')
+    btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6L5 9L10 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    setTimeout(()=>{
+      btn.classList.remove('copied')
+      btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="4" y="4" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M3 8H2C1.45 8 1 7.55 1 7V2C1 1.45 1.45 1 2 1H7C7.55 1 8 1.45 8 2V3" stroke="currentColor" stroke-width="1.2"/></svg>'
+    }, 1500)
+  }).catch(()=>{})
+}
+function updateOHLC(b){}
+
+// ─── Chart loading overlay ───
+function _showChartOverlay(sym){
+  const overlay = document.getElementById('chartLoadOverlay')
+  const label   = document.getElementById('chartLoadLabel')
+  if(!overlay) return
+  const short = sym ? sym.replace('/USDT:USDT','').replace('/USDT','') : '…'
+  if(label) label.textContent = short
+  // Sync screener state — don't cover side panel
+  overlay.classList.toggle('screener-hidden', !screenerVisible)
+  // Sync ind-panel open state — don't cover indicators panel
+  const indOpen = document.getElementById('indPanel')?.classList.contains('open')
+  overlay.classList.toggle('ind-open', !!indOpen)
+  overlay.classList.add('visible')
+}
+
+function _hideChartOverlay(){
+  const overlay = document.getElementById('chartLoadOverlay')
+  if(overlay) overlay.classList.remove('visible')
+}
+
+
+async function reloadCurrentSymbol(){
+  if(!activeSymbol) return
+  const btn = document.getElementById('reloadBtn')
+  if(btn) btn.classList.add('loading')
+  try{
+    const res = await fetch(`/api/reload/${encodeURIComponent(activeSymbol)}`, {method:'POST'})
+    if(res.ok){
+      await loadChart(activeSymbol, activeTF)
+    }
+  }catch(e){ console.error('reload:', e) }
+  finally{
+    if(btn) btn.classList.remove('loading')
+  }
+}
+
+async function loadChart(symbol,tf){
+  tf=tf||activeTF; activeSymbol=symbol; activeTF=tf
+  _showChartOverlay(symbol)
+  document.querySelectorAll('.sym-row').forEach(r=>r.classList.toggle('active',r.dataset.sym===symbol))
+  const info=symbols.find(s=>s.symbol===symbol)
+  if(info)updateHeader(symbol,info.price,info.change)
+
+  // ── Запускаем все запросы параллельно ──────────────────────────────────────
+  const enc  = encodeURIComponent(symbol)
+  const mode = document.getElementById('modeEl').value
+  const pct  = document.getElementById('pctEl').value
+  const vol  = document.getElementById('volEl').value
+  const pocP = new URLSearchParams({tf,poc4h:pocState['4H'],poc1d:pocState['1D'],poc1w:pocState['1W'],poc1m:pocState['1M']})
+
+  const barsPromise       = fetch(`/api/bars/${enc}?tf=${tf}`).then(r=>r.json()).then(bars=>bars.map(b=>({...b,time:Math.floor(b.time/1000)})))
+  const absorptionPromise = indState.cluster
+    ? fetch(`/api/absorption/${enc}?tf=${tf}&mode=${mode}&percentile=${pct}&manual_vol=${vol}`).then(r=>r.json()).catch(()=>null)
+    : Promise.resolve(null)
+  const pocEnabled = ['4H','1D','1W','1M'].some(l=>pocState[l])
+  const pocPromise = pocEnabled
+    ? fetch(`/api/poc/${enc}?${pocP}`).then(r=>r.json()).catch(()=>null)
+    : Promise.resolve(null)
+  const oiPromise         = indState.oi
+    ? fetch(`/api/oi/${enc}?tf=${tf}`).then(r=>r.ok?r.json():null).catch(()=>null).then(d=>{
+        const lbl=document.querySelector('#paneOI .sub-pane-label')
+        if(lbl) lbl.textContent = (d && d.length) ? 'OI' : 'OI  (нет данных)'
+        return d
+      })
+    : Promise.resolve(null)
+
+  // ── Рендерим свечи как только bars готов ───────────────────────────────────
+  try{
+    const bars = await barsPromise
+    if(bars.length){
+      const samplePrice=bars[bars.length-1].close
+      const precision = samplePrice>=100?2:samplePrice>=10?3:samplePrice>=1?4:samplePrice>=0.1?5:samplePrice>=0.01?6:samplePrice>=0.001?7:8
+      const minMove = Math.pow(10,-precision)
+      candles.applyOptions({priceFormat:{type:'price',precision,minMove}})
+    }
+    const closedBars=bars.length>1?bars.slice(0,-1):bars
+    candles.setData(closedBars)
+    currentBars=closedBars
+    if(bars.length)updateOHLC(bars[bars.length-1])
+    mainChart.timeScale().scrollToRealTime()
+    try{
+      const vr=mainChart.timeScale().getVisibleLogicalRange()
+      if(vr){
+        const span=vr.to-vr.from
+        const last=bars.length-1
+        mainChart.timeScale().setVisibleLogicalRange({from:last-span*0.85,to:last+span*0.15})
+      }
+    }catch(e){}
+    mainChart.applyOptions({rightPriceScale:{autoScale:true,scaleMargins:{top:0.1,bottom:0.1}}})
+    rebuildIndicators(bars)
+    _hideChartOverlay()
+  }catch(e){console.error('bars:',e); _hideChartOverlay()}
+
+  // ── Ждём остальные (они уже шли параллельно с bars) ────────────────────────
+  clearPocSeries()
+  const [absorptionResp, pocData, oiResp] = await Promise.all([absorptionPromise, pocPromise, oiPromise])
+
+  if(absorptionResp !== null){
+    const data   = Array.isArray(absorptionResp) ? absorptionResp : (absorptionResp.signals || [])
+    const thresh = Array.isArray(absorptionResp) ? null : absorptionResp.auto_thresh
+    setAbsorption(data, thresh, mode)
+  }
+  if(pocData !== null) renderPOC(pocData)
+  if(oiResp !== null && oiResp.length){ oiData=oiResp; _redrawAllOscillators() }
+
+  if(indState.dom) _startDomRefresh()
+  if(indState.limitlevels) _startLimitLevels(symbol)
+  _startLiveBar(symbol, tf)
+  resize()
+}
+
+async function loadAbsorption(symbol,tf){
+  if(!indState.cluster) return
+  tf=tf||activeTF
+  const mode=document.getElementById('modeEl').value
+  const pct=document.getElementById('pctEl').value
+  const vol=document.getElementById('volEl').value
+  try{
+    const resp=await fetch(`/api/absorption/${encodeURIComponent(symbol)}?tf=${tf}&mode=${mode}&percentile=${pct}&manual_vol=${vol}`).then(r=>r.json())
+    // New format: {signals:[...], auto_thresh: number}
+    const data = Array.isArray(resp) ? resp : (resp.signals || [])
+    const thresh = Array.isArray(resp) ? null : resp.auto_thresh
+    setAbsorption(data, thresh, mode)
+  }catch(e){console.error('abs:',e)}
+}
+
+async function loadPOC(symbol,tf){
+  if(!['4H','1D','1W','1M'].some(l=>pocState[l])) return
+  tf=tf||activeTF
+  const p=new URLSearchParams({tf,poc4h:pocState['4H'],poc1d:pocState['1D'],poc1w:pocState['1W'],poc1m:pocState['1M']})
+  try{
+    const data=await fetch(`/api/poc/${encodeURIComponent(symbol)}?${p}`).then(r=>r.json())
+    renderPOC(data)
+  }catch(e){console.error('poc:',e)}
+}
+
+function setAbsorption(data, thresh, mode){
+  if(indState.cluster)
+    absorption=data.map(d=>({ts_sec:d.ts/1000,mid:d.mid,is_up:d.is_up,size_cat:d.size_cat}))
+  else
+    absorption=[]
+  const ti=document.getElementById('threshInfo')
+  if(mode==='Auto'&&thresh!=null){
+    ti.innerHTML=`Threshold: <b>${fmtVol(thresh)}</b>`
+  } else if(mode==='Manual'){
+    ti.innerHTML=`Threshold: <b>Manual</b>`
+  } else {
+    ti.textContent='—'
+  }
+  drawBubbles()
+}
+
+function togglePOC(label){
+  pocState[label]=!pocState[label]
+  const btn=document.querySelector(`.poc-btn[data-poc="${label}"]`)
+  if(btn)btn.classList.toggle('on',pocState[label])
+  _applyPOCChange()
+  saveSettings()
+}
+
+function togglePOCFromPanel(label, val){
+  pocState[label]=val
+  const btn=document.querySelector(`.poc-btn[data-poc="${label}"]`)
+  if(btn)btn.classList.toggle('on',val)
+  _applyPOCChange()
+  saveSettings()
+}
+
+function toggleIndPanel(){
+  const panel=document.getElementById('indPanel')
+  const btn=document.getElementById('indToggleBtn')
+  const arrow=document.getElementById('indToggleArrow')
+  const open=panel.classList.toggle('open')
+  btn.classList.toggle('open',open)
+  arrow.textContent=open?'▴':'▾'
+  indPanelOpen=open
+  setTimeout(resize, 250)
+  saveSettings()
+}
+
+// ── Indicator series holders ──
+let smaSeries=null, emaSeries=null
+
+// Sub-pane canvas data
+let volData=null, deltaData=null, oiData=null
+
+
+// ── Sub-pane canvas contexts ──
+const _cv = {
+  volume: { id:'canvasVolume', el:null, ctx:null },
+  delta:  { id:'canvasDelta',  el:null, ctx:null },
+  oi:     { id:'canvasOI',     el:null, ctx:null },
+}
+function _initCanvases(){
+  for(const k in _cv){
+    _cv[k].el  = document.getElementById(_cv[k].id)
+    _cv[k].ctx = _cv[k].el.getContext('2d')
+  }
+}
+
+function _showPane(id, visible){
+  const el = document.getElementById(id)
+  if(el) el.classList.toggle('visible', visible)
+}
+
+function _syncCanvas(cv){
+  const rect = cv.el.getBoundingClientRect()
+  const dpr  = window.devicePixelRatio || 1
+  const w = Math.round(rect.width*dpr), h = Math.round(rect.height*dpr)
+  if(cv.el.width!==w || cv.el.height!==h){
+    cv.el.width=w; cv.el.height=h
+  }
+  return {w:rect.width, h:rect.height, dpr}
+}
+
+// ── Core canvas oscillator renderer ──
+// data: [{time (unix sec), value, color?}]
+// options: {yMin, yMax, label, lineColor, fillColor, type:'bar'|'line'}
+function _drawOscCanvas(cv, data, options={}){
+  if(!cv.el || !cv.ctx) return
+  const {w, h} = _syncCanvas(cv)
+  const dpr = window.devicePixelRatio||1
+  const ctx = cv.ctx
+  ctx.setTransform(dpr,0,0,dpr,0,0)
+  ctx.clearRect(0,0,w,h)
+  if(!data || !data.length) return
+
+  // Price scale background — transparent main area, only price scale bg
+  const c0 = getChartColors()
+  ctx.clearRect(0,0,w,h)
+
+  // Grid line
+  ctx.strokeStyle = c0.grid
+  ctx.lineWidth = 1
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(w,0); ctx.stroke()
+
+  const PRICE_SCALE_W = 62
+  const drawW = w - PRICE_SCALE_W - 2
+  if(drawW < 4) return
+
+  // Map time → x using main chart time scale
+  // Filter data to visible range
+  const visRange = mainChart.timeScale().getVisibleRange()
+  const tMin = visRange ? visRange.from : data[0].time
+  const tMax = visRange ? visRange.to   : data[data.length-1].time
+
+  const visible = data.filter(d => d.time >= tMin-1 && d.time <= tMax+1)
+  if(!visible.length) return
+
+  // Y range
+  const vals = visible.map(d=>d.value).filter(v=>isFinite(v))
+  if(!vals.length) return
+  let yMin = options.yMin ?? Math.min(...vals)
+  let yMax = options.yMax ?? Math.max(...vals)
+  if(yMin===yMax){ yMin-=1; yMax+=1 }
+  // Add 8% padding when not explicitly set
+  const pad = (yMax - yMin) * 0.08
+  if(options.yMin == null) yMin -= pad
+  if(options.yMax == null) yMax += pad
+  const yRange = yMax - yMin
+  const toY = v => h - 4 - ((v-yMin)/yRange)*(h-8)
+
+  // Price scale right side
+  ctx.fillStyle = c0.bg
+  ctx.fillRect(drawW+2, 0, PRICE_SCALE_W, h)
+  ctx.strokeStyle = c0.border
+  ctx.lineWidth=1
+  ctx.beginPath(); ctx.moveTo(drawW+2,0); ctx.lineTo(drawW+2,h); ctx.stroke()
+  // Scale labels
+  ctx.fillStyle = c0.text
+  ctx.font = '9px monospace'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  const fmtV = v => v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v.toFixed(1)
+  ctx.fillText(fmtV(yMax), drawW+5, 8)
+  ctx.fillText(fmtV((yMax+yMin)/2), drawW+5, h/2)
+  ctx.fillText(fmtV(yMin), drawW+5, h-6)
+
+  // Zero line for delta
+  if(options.zeroline){
+    const zy = toY(0)
+    ctx.strokeStyle='rgba(120,130,150,0.4)'; ctx.lineWidth=1; ctx.setLineDash([3,3])
+    ctx.beginPath(); ctx.moveTo(0,zy); ctx.lineTo(drawW,zy); ctx.stroke()
+    ctx.setLineDash([])
+  }
+
+  const type = options.type || 'bar'
+
+  if(type==='bar'){
+    // Bar width: use main chart bar spacing as reference
+    const tsRange = tMax - tMin || 1
+    const pxPerSec = drawW / tsRange
+    // Step between bars
+    const step = visible.length>1 ? (visible[visible.length-1].time - visible[0].time)/(visible.length-1) : 60
+    const barW = Math.max(1, Math.floor(pxPerSec * step * 0.8))
+
+    for(const d of visible){
+      const x = mainChart.timeScale().timeToCoordinate(d.time)
+      if(x===null || x<0 || x>drawW) continue
+      const y = toY(d.value)
+      const zero = toY(0)
+      const top  = Math.min(y, zero)
+      const bh   = Math.abs(y - zero)
+      ctx.fillStyle = d.color || options.fillColor || 'rgba(24,144,255,0.6)'
+      ctx.fillRect(x - barW/2, top, barW, Math.max(1, bh))
+    }
+  } else {
+    // Line
+    ctx.strokeStyle = options.lineColor || '#00bcd4'
+    ctx.lineWidth   = 1.5
+    ctx.lineJoin    = 'round'
+    ctx.beginPath()
+    let started = false
+    let firstX = 0, lastX = 0
+    for(const d of visible){
+      const x = mainChart.timeScale().timeToCoordinate(d.time)
+      if(x===null || x<0 || x>drawW) continue
+      const y = toY(d.value)
+      if(!started){ ctx.moveTo(x,y); firstX=x; started=true }
+      else ctx.lineTo(x,y)
+      lastX=x
+    }
+    ctx.stroke()
+    // Fill under line — from firstX to lastX, no bleed to corners
+    if(started && options.fillColor){
+      ctx.lineTo(lastX, toY(yMin)); ctx.lineTo(firstX, toY(yMin)); ctx.closePath()
+      ctx.fillStyle = options.fillColor
+      ctx.fill()
+    }
+  }
+
+  // Label drawn by HTML .sub-pane-label — skip canvas label
+
+  // ── Crosshair vertical line + value label ──
+  if(_crosshairX !== null && _crosshairX >= 0 && _crosshairX <= drawW){
+    const cx = _crosshairX
+    // Vertical dashed line
+    ctx.save()
+    ctx.strokeStyle = c0.crosshair || 'rgba(120,130,160,0.6)'
+    ctx.lineWidth   = 1
+    ctx.setLineDash([4, 3])
+    ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h); ctx.stroke()
+    ctx.setLineDash([])
+
+    // Find nearest data point to crosshair time
+    if(_crosshairTime !== null && data.length){
+      let nearest = null, bestDist = Infinity
+      for(const d of data){
+        const dist = Math.abs(d.time - _crosshairTime)
+        if(dist < bestDist){ bestDist=dist; nearest=d }
+      }
+      if(nearest && isFinite(nearest.value)){
+        const cy = toY(nearest.value)
+        // Horizontal dashed line at value
+        ctx.strokeStyle = c0.crosshair || 'rgba(120,130,160,0.4)'
+        ctx.lineWidth = 1
+        ctx.setLineDash([4, 3])
+        ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(drawW, cy); ctx.stroke()
+        ctx.setLineDash([])
+
+        // Value badge on price scale
+        const label = fmtV(nearest.value)
+        const bx    = drawW + 4
+        const bw    = PRICE_SCALE_W - 4
+        ctx.fillStyle   = c0.crosshair || 'rgba(42,51,80,0.9)'
+        ctx.fillRect(bx, cy - 8, bw, 16)
+        ctx.fillStyle   = '#fff'
+        ctx.font        = 'bold 9px monospace'
+        ctx.textAlign   = 'left'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(label, bx + 3, cy)
+
+        // Dot on line
+        ctx.beginPath()
+        ctx.arc(cx, cy, 3, 0, Math.PI*2)
+        ctx.fillStyle = options.lineColor || (nearest.value >= 0 ? '#0ecb81' : '#f6465d')
+        ctx.fill()
+      }
+    }
+    ctx.restore()
+  }
+}
+
+function _redrawAllOscillators(){
+  if(indState.volume && volData)   _drawOscCanvas(_cv.volume, volData,  {type:'bar',  label:'Volume', yMin:0})
+  if(indState.delta  && deltaData) _drawOscCanvas(_cv.delta,  deltaData,{type:'bar',  label:'Delta',  zeroline:true})
+  if(indState.oi     && oiData)    _drawOscCanvas(_cv.oi,     oiData,   {type:'line', label:'OI',     lineColor:'#00bcd4', fillColor:'rgba(0,188,212,0.10)'})
+}
+
+// ── Calc helpers ──
+function calcSMA(bars, period){
+  const out=[]
+  for(let i=0;i<bars.length;i++){
+    if(i<period-1)continue
+    let sum=0; for(let j=i-period+1;j<=i;j++) sum+=bars[j].close
+    out.push({time:bars[i].time, value:sum/period})
+  }
+  return out
+}
+function calcEMA(bars, period){
+  const k=2/(period+1), out=[]
+  let ema=null
+  for(let i=0;i<bars.length;i++){
+    if(ema===null){
+      if(i<period-1)continue
+      ema=bars.slice(0,period).reduce((s,b)=>s+b.close,0)/period
+    } else {
+      ema=bars[i].close*k+ema*(1-k)
+    }
+    out.push({time:bars[i].time, value:ema})
+  }
+  return out
+}
+function calcVolume(bars){
+  return bars.map(b=>({
+    time:  b.time,
+    value: b.volume,
+    color: b.close>=b.open ? 'rgba(14,203,129,0.60)' : 'rgba(246,70,93,0.60)',
+  }))
+}
+function calcDelta(bars){
+  return bars.map(b=>{
+    const range   = b.high-b.low || 1e-12
+    const buyFrac = (b.close-b.low) / range
+    const buyVol  = b.volume * buyFrac
+    const delta   = buyVol - (b.volume - buyVol)
+    return {
+      time:  b.time,
+      value: delta,
+      color: delta>=0 ? 'rgba(14,203,129,0.70)' : 'rgba(246,70,93,0.70)',
+    }
+  })
+}
+
+// ── Remove series helper ──
+function _removeSeries(chart, s){
+  if(s && chart){ try{ chart.removeSeries(s) }catch(e){} }
+}
+
+function toggleIndicator(key, enabled){
+  indState[key]=enabled
+  saveSettings()
+
+  if(key==='cluster'){
+    if(!enabled) absorption=[]
+    else if(activeSymbol) loadAbsorption(activeSymbol, activeTF)
+    drawBubbles()
+    return
+  }
+
+  if(key==='sma20'){
+    if(smaSeries){ _removeSeries(mainChart,smaSeries); smaSeries=null }
+    if(enabled && currentBars.length){
+      smaSeries = mainChart.addLineSeries({
+        color:'#f0b90b', lineWidth:1.5,
+        priceLineVisible:false, lastValueVisible:false, crosshairMarkerVisible:false,
+      })
+      smaSeries.setData(calcSMA(currentBars,20))
+    }
+    return
+  }
+
+  if(key==='ema200'){
+    if(emaSeries){ _removeSeries(mainChart,emaSeries); emaSeries=null }
+    if(enabled && currentBars.length){
+      emaSeries = mainChart.addLineSeries({
+        color:'#9467bd', lineWidth:1.5,
+        priceLineVisible:false, lastValueVisible:false, crosshairMarkerVisible:false,
+      })
+      emaSeries.setData(calcEMA(currentBars,200))
+    }
+    return
+  }
+
+  if(key==='volume'){
+    _showPane('paneVolume', enabled)
+    if(!enabled){ volData=null }
+    else if(currentBars.length){ volData=calcVolume(currentBars) }
+    setTimeout(resize, 50)
+    scheduleRedraw()
+    return
+  }
+
+  if(key==='delta'){
+    _showPane('paneDelta', enabled)
+    if(!enabled){ deltaData=null }
+    else if(currentBars.length){ deltaData=calcDelta(currentBars) }
+    setTimeout(resize, 50)
+    scheduleRedraw()
+    return
+  }
+
+  if(key==='oi'){
+    _showPane('paneOI', enabled)
+    if(!enabled){ oiData=null }
+    else if(activeSymbol){ loadOI(activeSymbol, activeTF) }
+    setTimeout(resize, 50)
+    return
+  }
+
+  if(key==='dom'){
+    if(enabled){
+      const sel=document.getElementById('domDepthSel')
+      if(sel) sel.value=String(domDepth)
+      if(activeSymbol) _startDomRefresh()
+    } else {
+      _stopDomRefresh()
+      _domData=null
+      _domCtx.clearRect(0,0,_domCanvas.width,_domCanvas.height)
+    }
+    return
+  }
+  if(key==='limitlevels'){
+    if(enabled && activeSymbol) _startLimitLevels(activeSymbol)
+    else { _stopLimitLevels(); drawBubbles() }
+    return
+  }
+}
+
+// ── POC master toggle ──
+function toggleAllPOC(val){
+  ['4H','1D','1W','1M'].forEach(label=>{
+    pocState[label]=val
+    const btn=document.querySelector(`.poc-btn[data-poc="${label}"]`)
+    if(btn)btn.classList.toggle('on',val)
+  })
+  const el=document.getElementById('ind-poc-all')
+  if(el){ el.checked=val; el.indeterminate=false }
+  _applyPOCChange()
+  saveSettings()
+}
+function _syncPOCMaster(){
+  const any  = ['4H','1D','1W','1M'].some(l=>pocState[l])
+  const all  = ['4H','1D','1W','1M'].every(l=>pocState[l])
+  const el   = document.getElementById('ind-poc-all')
+  if(!el) return
+  el.checked       = any
+  el.indeterminate = any && !all
+}
+
+// Вызывается из togglePOC — обновляет чекбокс и управляет индикатором
+function _applyPOCChange(){
+  _syncPOCMaster()
+  const any = ['4H','1D','1W','1M'].some(l=>pocState[l])
+  if(!any){
+    clearPocSeries()   // все выключены — убираем линии с графика
+  } else if(activeSymbol){
+    loadPOC(activeSymbol)  // хотя бы один включён — перегружаем
+  }
+}
+
+function showToast(msg){
+  let t=document.getElementById('_toast')
+  if(!t){
+    t=document.createElement('div'); t.id='_toast'
+    t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--bg3);border:1px solid var(--border);color:var(--t1);font-size:11px;padding:6px 14px;border-radius:5px;z-index:9999;pointer-events:none;opacity:0;transition:opacity .2s'
+    document.body.appendChild(t)
+  }
+  t.textContent=msg; t.style.opacity='1'
+  clearTimeout(t._t); t._t=setTimeout(()=>t.style.opacity='0', 3000)
+}
+
+// ── Rebuild all enabled indicators after new bars loaded ──
+function rebuildIndicators(bars){
+  // SMA
+  if(smaSeries){ _removeSeries(mainChart,smaSeries); smaSeries=null }
+  if(indState.sma20 && bars.length){
+    smaSeries = mainChart.addLineSeries({color:'#f0b90b',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false})
+    smaSeries.setData(calcSMA(bars,20))
+  }
+  // EMA
+  if(emaSeries){ _removeSeries(mainChart,emaSeries); emaSeries=null }
+  if(indState.ema200 && bars.length){
+    emaSeries = mainChart.addLineSeries({color:'#9467bd',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false})
+    emaSeries.setData(calcEMA(bars,200))
+  }
+  // Volume
+  _showPane('paneVolume', !!indState.volume)
+  volData = (indState.volume && bars.length) ? calcVolume(bars) : null
+  // Delta
+  _showPane('paneDelta', !!indState.delta)
+  deltaData = (indState.delta && bars.length) ? calcDelta(bars) : null
+  // OI
+  _showPane('paneOI', !!indState.oi)
+  if(!indState.oi) oiData = null
+  setTimeout(()=>{ resize(); _redrawAllOscillators() }, 100)
+}
+
+// ── OI ──
+async function loadOI(symbol, tf){
+  tf = tf || activeTF
+  try{
+    const r = await fetch(`/api/oi/${encodeURIComponent(symbol)}?tf=${tf}`)
+    if(!r.ok){
+      console.warn('OI: HTTP', r.status, 'for', symbol)
+      // Show pane label with error hint but don't toast
+      const lbl = document.querySelector('#paneOI .sub-pane-label')
+      if(lbl) lbl.textContent = 'OI  (нет данных)'
+      return
+    }
+    const data = await r.json()
+    if(!data || !data.length){
+      console.warn('OI: empty data for', symbol)
+      const lbl = document.querySelector('#paneOI .sub-pane-label')
+      if(lbl) lbl.textContent = 'OI  (нет данных)'
+      return
+    }
+    const lbl = document.querySelector('#paneOI .sub-pane-label')
+    if(lbl) lbl.textContent = 'OI'
+    oiData = data
+    _redrawAllOscillators()
+  }catch(e){
+    console.warn('OI load failed:', e)
+    const lbl = document.querySelector('#paneOI .sub-pane-label')
+    if(lbl) lbl.textContent = 'OI  (нет данных)'
+  }
+}
+
+
+function setTF(tf){
+  if(tf===activeTF&&activeSymbol)return
+  activeTF=tf
+  document.querySelectorAll('.tb-btn[data-tf]').forEach(b=>b.classList.toggle('active',b.dataset.tf===tf))
+  saveSettings()
+  if(!activeSymbol)return
+  loadChart(activeSymbol,tf)
+}
+
+document.getElementById('modeEl').addEventListener('change',function(){
+  const auto=this.value==='Auto'
+  document.getElementById('pctLbl').style.display=auto?'':'none'
+  document.getElementById('pctEl').style.display=auto?'':'none'
+  document.getElementById('volLbl').style.display=auto?'none':''
+  document.getElementById('volEl').style.display=auto?'none':''
+})
+
+function applySettings(){
+  if(!activeSymbol) return
+  if(indState.cluster) loadAbsorption(activeSymbol)
+  if(['4H','1D','1W','1M'].some(l=>pocState[l])) loadPOC(activeSymbol)
+  saveSettings()
+}
+
+function stepInput(dir){
+  const mode = document.getElementById('modeEl').value
+  if(mode === 'Auto'){
+    const el = document.getElementById('pctEl')
+    const val = parseFloat(el.value) || 99
+    let next
+    if(dir > 0){
+      // Вверх: шаг зоны куда идём
+      if(val < 99)       next = Math.min(99,  Math.round((val + 0.5) / 0.5) * 0.5)
+      else if(val < 99.9)next = Math.min(99.9, Math.round((val + 0.1) / 0.1) * 0.1)
+      else               next = Math.min(100,  Math.round((val + 0.01)/ 0.01)* 0.01)
+    } else {
+      // Вниз: шаг текущей зоны, но при переходе границы — snap к ней
+      if(val <= 99 + 1e-9)      next = Math.max(50,   Math.round((val - 0.5) / 0.5) * 0.5)
+      else if(val <= 99.9 + 1e-9)next = Math.max(99,   Math.round((val - 0.1) / 0.1) * 0.1)
+      else                      next = Math.max(99.9,  Math.round((val - 0.01)/ 0.01)* 0.01)
+    }
+    next = Math.min(100, Math.max(50, next))
+    el.value = next >= 99.9 ? next.toFixed(2) : next.toFixed(1)
+  }
+  if(activeSymbol) loadAbsorption(activeSymbol, activeTF)
+}
+
+// ─── Resize ───
+function resize(){
+  const mainPane = document.getElementById('mainPane')
+  let savedRange=null
+  try{ savedRange=mainChart.timeScale().getVisibleLogicalRange() }catch(e){}
+  mainChart.applyOptions({width:mainPane.clientWidth, height:mainPane.clientHeight})
+  if(savedRange){ try{ mainChart.timeScale().setVisibleLogicalRange(savedRange) }catch(e){} }
+  syncPreviewCanvas()
+  drawBubbles()
+  _redrawAllOscillators()
+  _domRedrawOnResize()
+}
+new ResizeObserver(resize).observe(document.getElementById('chartsWrap'))
+new ResizeObserver(resize).observe(document.getElementById('mainPane'))
+_initCanvases()
+
+// ─── Sub-pane drag resize ───
+;(function(){
+  const MIN_H = 40, MAX_H = 400
+  let _drag = null
+
+  document.querySelectorAll('.sub-pane-resize').forEach(handle=>{
+    handle.addEventListener('mousedown', e=>{
+      e.preventDefault()
+      const paneEl  = document.getElementById(handle.dataset.pane)
+      const chartId = handle.dataset.chart
+      _drag = { paneEl, chartId, startY: e.clientY, startH: paneEl.clientHeight }
+      document.body.style.cursor = 'ns-resize'
+      document.body.style.userSelect = 'none'
+    })
+  })
+
+  document.addEventListener('mousemove', e=>{
+    if(!_drag) return
+    const newH = Math.min(MAX_H, Math.max(MIN_H, _drag.startH - (e.clientY - _drag.startY)))
+    _drag.paneEl.style.height = newH + 'px'
+    resize()
+  })
+
+  document.addEventListener('mouseup', ()=>{
+    if(!_drag) return
+    _drag = null
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  })
+})()
+setTimeout(resize,50)
+
+// ─── Helpers ───
+function fmtVol(v){
+  if(v==null||isNaN(v))return'—'
+  if(v>=1e9)return(v/1e9).toFixed(2)+'B'
+  if(v>=1e6)return(v/1e6).toFixed(2)+'M'
+  if(v>=1e3)return(v/1e3).toFixed(1)+'K'
+  return v.toFixed(1)
+}
+function fmt(v){
+  if(v==null)return'—'
+  return v>=1000?v.toLocaleString('en',{maximumFractionDigits:2}):v>=1?v.toFixed(4):v.toFixed(6)
+}
+
+// ─── Polling ───
+async function pollStatus(){
+  try{
+    const s=await fetch('/api/status').then(r=>r.json())
+    document.getElementById('loadFill').style.width=s.percent+'%'
+    document.getElementById('loadTxt').textContent=`${s.loaded}/${s.total} (${s.percent}%)`
+    if(s.ready)document.getElementById('loadWrap').style.display='none'
+  }catch(e){}
+}
+
+async function pollSymbols(){
+  try{
+    const fresh=await fetch('/api/symbols').then(r=>r.json())
+    symbols=fresh
+    // #9: если порядок/фильтр не менялся — только данные, без DOM-перестановок
+    updateScreenerRows()
+  }catch(e){}
+}
+
+function startAutoRefresh(){
+  setInterval(()=>{
+    if(activeSymbol){
+      if(indState.cluster) loadAbsorption(activeSymbol,activeTF)
+      if(['4H','1D','1W','1M'].some(l=>pocState[l])) loadPOC(activeSymbol,activeTF)
+    }
+  },15000)
+  setInterval(()=>{
+    if(sortField==='anomaly') loadAnomalies()
+  },35000)
+}
+
+// ─── Bootstrap: load settings from server, then start UI ───
+async function _bootstrap(){
+  await _loadSettingsFromServer()
+  // Re-apply saved values now that _saved is populated
+  if(_saved.tf) activeTF=_saved.tf
+  if(_saved.sortField){sortField=_saved.sortField;sortAsc=!!_saved.sortAsc}
+  if(_saved.pocState) Object.assign(pocState,_saved.pocState)
+  if(_saved.indState)  Object.assign(indState,_saved.indState)
+  if(_saved.indPanelOpen!=null) indPanelOpen=_saved.indPanelOpen
+  if(_saved.theme){ currentTheme=_saved.theme; document.documentElement.setAttribute('data-theme',currentTheme); updateThemeBtn(); applyChartTheme() }
+  if(_saved.utcOffset !== undefined){ utcOffset=_saved.utcOffset; applyUTC() }
+
+  pollStatus(); pollSymbols()
+  setInterval(pollStatus, 10000)
+  setInterval(pollSymbols, 30 * 1000)
+
+// ─── Восстановление UI из сохранённых настроек ───
+;(function applyInitialSettings(){
+  // _saved already loaded from server before this runs
+  const s=_saved
+  // TF кнопки
+  document.querySelectorAll('.tb-btn[data-tf]').forEach(b=>b.classList.toggle('active',b.dataset.tf===activeTF))
+  // POC кнопки
+  for(const label in pocState){
+    const btn=document.querySelector(`.poc-btn[data-poc="${label}"]`)
+    if(btn)btn.classList.toggle('on',pocState[label])
+  }
+  // Sort tab
+  if(s.sortField){
+    document.querySelectorAll('.sort-tab').forEach(b=>b.classList.remove('active'))
+    const stBtn=document.getElementById('st-'+sortField)
+    if(stBtn)stBtn.classList.add('active')
+    const SORT_LABELS={name:'Имя',change:'24h%',vol24h:'Vol 24h',spike_2h_24h:'2H/24H'}
+    const lbl=document.getElementById('sortColLabel')
+    if(lbl)lbl.textContent=SORT_LABELS[sortField]||sortField
+  }
+  // Mode / pct / vol
+  if(s.mode){
+    const modeEl=document.getElementById('modeEl')
+    if(modeEl){
+      modeEl.value=s.mode
+      const auto=s.mode==='Auto'
+      document.getElementById('pctLbl').style.display=auto?'':'none'
+      document.getElementById('pctEl').style.display=auto?'':'none'
+      document.getElementById('volLbl').style.display=auto?'none':''
+      document.getElementById('volEl').style.display=auto?'none':''
+    }
+  }
+  if(s.pct){const el=document.getElementById('pctEl');if(el)el.value=s.pct}
+  if(s.vol){const el=document.getElementById('volEl');if(el)el.value=s.vol}
+
+  // Restore indicator checkboxes
+  for(const key in indState){
+    const el=document.getElementById('ind-'+key)
+    if(el)el.checked=indState[key]
+  }
+  // Restore POC panel — single master checkbox
+  const allOn = ['4H','1D','1W','1M'].every(l=>pocState[l])
+  const pocAllEl = document.getElementById('ind-poc-all')
+  if(pocAllEl) pocAllEl.checked = allOn
+  _syncPOCMaster()
+  // Restore accordion open state
+  if(indPanelOpen){
+    const panel=document.getElementById('indPanel')
+    const btn=document.getElementById('indToggleBtn')
+    const arrow=document.getElementById('indToggleArrow')
+    if(panel){panel.classList.add('open');btn&&btn.classList.add('open');if(arrow)arrow.textContent='▴';setTimeout(resize,100)}
+  }
+  // Restore screener visibility
+  if(_saved.screenerVisible===false){
+    screenerVisible=true;toggleScreener()
+  }
+  // Restore DOM depth select value
+  const _domSel=document.getElementById('domDepthSel')
+  if(_domSel) _domSel.value=String(domDepth)
+  // Restore Big Bid/Ask params and sync to backend
+  if(s.limitMult!=null){const el=document.getElementById('limitMultEl');if(el)el.value=s.limitMult}
+  if(s.limitMult!=null){
+    applyLimitParams().catch(()=>{})
+  }
+})()
+
+const waitFirst=setInterval(async()=>{
+  const list=await fetch('/api/symbols').then(r=>r.json()).catch(()=>[])
+  const first=list.find(s=>s.loaded)
+  if(first){
+    clearInterval(waitFirst)
+    symbols=list; renderList()
+    // Загружаем последний открытый символ, или первый доступный
+    const sym=(_saved.symbol&&list.find(s=>s.symbol===_saved.symbol&&s.loaded))?_saved.symbol:first.symbol
+    loadChart(sym, activeTF)
+    saveSettings()
+    startAutoRefresh()
+  }
+},1500)
+} // end _bootstrap
+_bootstrap()
+
+document.getElementById('srch').addEventListener('input',renderList)
+
+// Close indicators panel when clicking outside
+document.addEventListener('mousedown', e=>{
+  const panel = document.getElementById('indPanel')
+  const btn   = document.getElementById('indToggleBtn')
+  if(panel && panel.classList.contains('open') && !panel.contains(e.target) && !btn.contains(e.target)){
+    panel.classList.remove('open')
+    btn.classList.remove('open')
+    document.getElementById('indToggleArrow').textContent='▾'
+    indPanelOpen=false
+    saveSettings()
+  }
+})
+
+// Сохраняем при клике на символ
+document.getElementById('symList').addEventListener('click',()=>setTimeout(saveSettings,100))
+</script>
+</body>
+</html>
