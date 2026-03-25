@@ -1,5 +1,3 @@
-
-
 import numpy as np
 import pandas as pd
 
@@ -38,6 +36,15 @@ def _make_freq_map():
         return {"4H": "4h", "1D": "D", "1W": "W", "1M": "M",  "1Y": "A"}
 
 FREQ_MAP = _make_freq_map()
+
+# Maps poc_label → kwargs for pd.Timedelta (freq aliases are NOT valid Timedelta kwargs)
+TIMEDELTA_MAP = {
+    "4H": {"hours":   4},
+    "1D": {"days":    1},
+    "1W": {"weeks":   1},
+    "1M": {"days":   31},   # approx; used only for is_closed check, not exact boundary
+    "1Y": {"days":  366},   # approx
+}
 
 
 def auto_incr(df: pd.DataFrame) -> float:
@@ -138,7 +145,7 @@ def calc_poc_series(base_df: pd.DataFrame,
             continue
 
         # Период завершён если его следующая граница уже в прошлом
-        period_end = period_start + pd.Timedelta(**{FREQ_MAP[poc_label]: 1})
+        period_end = period_start + pd.Timedelta(**TIMEDELTA_MAP[poc_label])
         is_closed = (now is not None) and (period_end < now)
 
         if is_closed and period_start in _cache:
